@@ -11,6 +11,11 @@ const KEYS = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'righ
 const PAD = { 14: 'left', 15: 'right', 12: 'up', 13: 'down', 0: 'toggle' };
 const STICK = 0.25;
 
+// A page screen is up over the match (the results, a menu, the duel rules): the camera is left
+// alone, and the keys and the controller belong to that screen.
+const covered = () => !!document.querySelector('.screen:not([hidden]), .game-menu:not([hidden])');
+const NOTHING = { cycle: 0, toggle: false, zoom: 0, pan: { x: 0, y: 0 } };
+
 export class Spectator {
   constructor(canvas) {
     this.canvas = canvas;
@@ -22,6 +27,7 @@ export class Spectator {
     this.onKey = (e) => {
       const k = KEYS[e.code];
       if (!k) return;
+      if (covered()) return this.held.delete(k);
       if (this.active && !/INPUT|SELECT|TEXTAREA|BUTTON/.test(e.target?.tagName ?? '')) e.preventDefault();
       if (e.repeat) return;
       if (e.type === 'keydown') {
@@ -50,6 +56,14 @@ export class Spectator {
   // This frame's asks: { cycle: -1 | 0 | 1, toggle, zoom: -1 | 0 | 1 (held), pan: { x, y } in
   // screens per second, roughly }.
   poll() {
+    if (covered()) {
+      // (Nothing carries over to when the screen goes: presses, held keys, mouse movement.)
+      this.pressed.clear();
+      this.held.clear();
+      Object.assign(this.mouse, { dx: 0, dy: 0, on: false });
+      for (const gp of navigator.getGamepads?.() ?? []) if (gp?.connected) for (const b of Object.keys(PAD)) if (gp.buttons[b]?.pressed) this.padDown.add(`${gp.index}:${b}`);
+      return NOTHING;
+    }
     const pressed = new Set(this.pressed);
     const held = new Set(this.held);
     this.pressed.clear();

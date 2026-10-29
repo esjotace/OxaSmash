@@ -125,4 +125,22 @@ describe('game server rooms', () => {
     expect(b.last('start').you).toBe(-1); // watching
     expect(room.match.world.fighters.every((f) => !f.hasGun)).toBe(true);
   });
+
+  it('in a series, the duels only open once it is decided', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    room.receive(a.i, { t: 'rules', rules: { rounds: 3 } }, 0);
+    room.receive(a.i, { t: 'addBot' }, 0);
+    // Round 1: Ana wins (1 of the 2 needed): no duels yet.
+    room.receive(a.i, { t: 'start' }, 0);
+    room.match.world.winner = 0;
+    room.matchOver(room.match, 0);
+    expect(room.duels).toBe(null);
+    // Round 2: Ana wins again: the series is hers, and the duels open.
+    room.receive(a.i, { t: 'again' }, 1);
+    room.match.world.winner = 0;
+    room.matchOver(room.match, 1);
+    expect(room.series.over).toBe(true);
+    expect(a.last('duels').d.phase).toBe('gather');
+  });
 });

@@ -63,7 +63,7 @@ export const KO_LINES = {
   spikes: ['{B} found the spikes. Pointy.', '{B} sat on a spike', '{B} hugged the spike wall'],
   crusher: ['{B} got crushed. Flat.', '{B} became a pancake', '{B} stood under the crusher. Brave.'],
   storm: ['{B} got swallowed by the storm', '{B} went for a walk in the storm', '{B} was eaten by weather'],
-  // (The same, with someone to blame: they'd hit them just before.)
+  // (The same, with someone to blame: they'd hit them just before; for the storm, punched into it.)
   'spikes+': ['{A} introduced {B} to the spikes', '{A} pinned {B} to the spike wall like a poster', '{A} sent {B} to acupuncture'],
   'crusher+': ['{A} held {B} still for the crusher', '{A} and the crusher teamed up on {B}', '{A} pancaked {B} with help from the ceiling'],
   'storm+': ['{A} fed {B} to the storm', '{A} threw {B} into the weather', '{A} gave {B} a one-way ticket into the storm'],
@@ -88,7 +88,9 @@ export function koLine(e, names, rnd = Math.random) {
   let key;
   if (what === 'lamp') key = 'lamp';
   else if (HAZARDS.has(what)) key = killer ? `${what}+` : what;
-  else if (e.how === 'storm') key = killer && what ? 'storm+' : 'storm';
+  // (Into the storm's wall: punched there, the storm lines; any other weapon, its own.)
+  else if (e.how === 'storm' && (!killer || !what)) key = 'storm';
+  else if (e.how === 'storm' && what === 'fists') key = 'storm+';
   else if (!what || !killer) key = 'self';
   else key = KO_LINES[what] ? what : 'unknown';
   const lines = KO_LINES[key];

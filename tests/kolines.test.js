@@ -21,6 +21,9 @@ describe('knockout lines', () => {
     expect(koLine({ id: 1, by: 0, with: 'mystery' }, names, first)).toContain('Ana');
     expect(koLine({ id: 1, by: -1, with: null }, names, first)).toBe('Beto tripped on nothing and left the stage');
     expect(koLine({ id: 1, by: -1, with: 'spikes' }, names, first)).toBe('Beto found the spikes. Pointy.');
+    expect(koLine({ id: 1, by: 0, with: 'fists', how: 'storm' }, names, first)).toBe('Ana fed Beto to the storm');
+    expect(koLine({ id: 1, by: 0, with: 'knife', how: 'storm' }, names, first)).toBe('Ana stabbed Beto out of the stage');
+    expect(koLine({ id: 1, by: -1, with: null, how: 'storm' }, names, first)).toBe('Beto got swallowed by the storm');
     expect(koLine({ id: 1, by: 0, with: 'spikes' }, names, first)).toBe('Ana introduced Beto to the spikes');
   });
 

@@ -299,7 +299,8 @@ export class Room {
       w.wins = (w.wins ?? 0) + 1;
       this.series.over = w.wins >= Math.ceil(this.series.rounds / 2);
     }
-    // The honor duels open.
+    // The honor duels open at the end of the match (in a series, once the series is decided).
+    if (this.series && !this.series.over) return;
     this.duels = new DuelBoard(this.players, now);
     this.pushDuels(now);
   }
