@@ -1,0 +1,29 @@
+{
+  "height": 120,
+  "pieces": {
+    "left_corner": {
+      "w": 10
+    },
+    "bay": {
+      "w": 102,
+      "door": 51
+    },
+    "pipe": {
+      "w": 22
+    },
+    "door": {
+      "w": 56,
+      "door": 28
+    },
+    "door_narrow": {
+      "w": 48,
+      "door": 23
+    },
+    "wall": {
+      "w": 16
+    },
+    "right_corner": {
+      "w": 24
+    }
+  }
+}

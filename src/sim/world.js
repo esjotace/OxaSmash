@@ -1,0 +1,2482 @@
+// The match rules, ported from the Godot build: movement, the 9mm (two magazines, auto-reload,
+// throw when empty), melee, cover, barrels, spike walls, the storm, lives. Plain JS, fixed ticks.
+import { CASH, LOOT, STYLE, AMMO_CHEST, SLIME, FOOTHOLD, ITEMS, CARRY, HAVEN, LEGENDARY, WISH, CROWN, RADIATION, DT, FIGHTER as F, GRAVITY, JUMP_SPEED, AIR_JUMP_SPEED, GUNS, GUN_THROW, HOLD, ACCURACY, HEADSHOT, BLAST, GRENADE, GRENADES, DASH, GLUE, STAMINA, SWING_HAND, STRIKE, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, PICKUPS, BLOCK, DOOR, BARREL, SPIKES, STORM, RULES, TILE, MOVERS, ICE } from './constants.js';
+import { getStage, DEFAULT_STAGE } from './stage.js';
+import { NEUTRAL } from './input.js';
+
+// training: lives never run out, guns never run dry, grenades are never used up, no storm, and
+// nothing turns up by itself: weapons are spawned from the Training menu (see spawnWeapon).
+// rules: what's in play: { melee, ranged, thrown, items } (all on unless false). With ranged off,
+// nobody starts with a gun and none turn up; with melee off, no melee weapons turn up (fists stay);
+// thrown off, no grenades; items off, no items.
+// crown: who wears the crown (last round's winner), or -1; crownRule: 'show', 'bounty' or 'weight'.
+export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.stocks, seed = 1, countdown = RULES.countdown, storm = {}, training = false, rules = {}, crown = -1, crownRule = 'show' }) {
+  const st = getStage(stage);
+  const rng = mulberry32(seed);
+  const world = {
+    tick: 0,
+    stage,
+    training,
+    rules: { melee: rules.melee !== false, ranged: rules.ranged !== false, thrown: rules.thrown !== false, items: rules.items !== false },
+    phase: countdown > 0 ? 'countdown' : 'play',
+    timer: countdown,
+    winner: null,
+    rng,
+    fighters: [],
+    bullets: [],
+    nextBullet: 1,
+    barrels: st.barrels.map((b) => ({ x: b.x, y: b.y, hp: BARREL.health, gone: false, fuse: -1, respawn: 0, lastBy: -1, flash: 0 })),
+    spikeCooldown: {},
+    // Moving and changing stage pieces (see updateMovers): y, whether they're there (on), and
+    // whether they're about to change (warn).
+    movers: (st.movers ?? []).map((m) => ({ y: m.kind === 'lift' ? m.bottom : m.kind === 'crusher' ? m.top : m.y, on: true, warn: false, t: -1 })),
+    live: st.blocks, // every block that's there right now: the stage's, plus movers that are on
+    shrineTimer: PICKUPS.firstAfter,
+    pickups: [], // melee weapons lying around: { id, x, y, weapon }
+    pickupTimer: PICKUPS.firstAfter,
+    nextPickup: 1,
+    storm: createStorm(st, { ...STORM, ...storm, ...(training ? { startDelay: 1e9 } : {}) }, rng),
+    grenades: [], // thrown grenades: { id, owner, kind, x, y, vx, vy, fuse }
+    nextGrenade: 1,
+    clouds: [], // smoke, poison and spore patches: { id, kind, x, y, r, t, by, perSecond? }
+    nextCloud: 1,
+    paints: [], // paint rolled on floors (the paint roller): { x1, x2, y, owner, t }
+    holes: [], // black holes pulling everyone in: { id, x, y, r, t, pull }
+    chest: null, // the locked chest the key opens: { x, y }
+    infiniteAmmo: training, // guns never run dry, grenades are never used up (training; switchable there)
+    haven: null, // the banner's melee-only zone: { x, y, left, right, owner, held }
+    ammoChests: placeAmmoChests(st), // { x, y, cd }: seconds until each can be used again
+    crown,
+    crownRule,
+    puddles: [], // slime glue on floors (the slime launcher): { x1, x2, y, t }
+    footholds: [], // arrows stuck in walls, to stand on: { x, y, dir, t }
+    loot: [], // money lying around (the jackpot): { id, x, y, vx, vy, look, value, t, landed }
+    nextLoot: 1,
+    events: [], // what happened during the last step, for effects and sound
+  };
+  for (let id = 0; id < players; id++) world.fighters.push(createFighter(id, st.spawns[id % st.spawns.length], stocks, world.rules.ranged));
+  return world;
+}
+
+// armed: starts (and respawns) with the pistol.
+function createFighter(id, spawn, stocks, armed = true) {
+  const f = {
+    id,
+    armed,
+    x: spawn.x,
+    y: spawn.y,
+    vx: 0,
+    vy: 0,
+    facing: spawn.x < 896 ? 1 : -1,
+    aimX: 1,
+    aimY: 0,
+    grounded: false,
+    onThin: false,
+    jumpsLeft: F.airJumps,
+    coyote: 0,
+    buffer: 0,
+    cutting: false,
+    fastFall: false,
+    drop: 0,
+    downTap: 0, // time left to tap down a second time and drop through a thin platform
+    damage: 0,
+    stocks,
+    state: 'ok', // ok | dead (waiting to respawn) | out
+    respawn: 0,
+    hitstun: 0,
+    invincible: 0,
+    flash: 0,
+    lastHitBy: -1,
+    kos: 0,
+    crouching: false,
+    tucked: false, // crouched right beside low cover: lower still
+    blocking: null, // 'stand' | 'crouch' while the block button is held
+    blockDrop: -1, // seconds since block was let go, during the drop animation; -1 otherwise
+    dropStance: null,
+    stunned: false, // stunned by a parry
+    swing: -1,
+    swingStance: 'stand',
+    swingX: 1,
+    swingY: 0,
+    swingHit: [],
+    seen: { jp: 0, sp: 0, mp: 0, dp: 0, rp: 0, hp: 0, ep: 0, gp: 0, xp: 0, cp: 0 },
+    stamina: 1, // 0..1; a dash needs it full
+    dash: 0, // seconds left in a dash
+    dodge: 0, // seconds left invincible from a dash
+    bleed: 0, // seconds left bleeding (the cleaver)
+    bleedRate: 0,
+    bleedBy: -1,
+    onGlue: false, // standing on a glued floor
+    burn: 0, // seconds left on fire
+    burnBy: -1,
+    slip: 0, // seconds left slipping as if on ice (slapped with the fish)
+    haste: 0, // seconds left running faster (ate a carrot)
+    carry: null, // an item held up (the key)
+    carryT: 0,
+    rune: null, // the rune boon on you (an ITEMS key)
+    runeT: 0,
+    reflects: 0, // damage the mirror rune still sends back
+    wish: -1, // seconds left rubbing the genie lamp, or -1
+    jinx: 0, // seconds left jinxed (the lamp's bad wish)
+    homing: 0, // seconds left of shots homing in (the crystal ball)
+    healthRule: null, // training dummies: { mode: 'set' | 'banded', value } (see updateItems)
+    bandT: 0,
+    hidden: -1, // index of the doorway this fighter is hiding in, or -1
+    pendingLaunch: null, // a delayed launch (100% keyboard word): { left, dx, dy, base, growth, by }
+    muzzle: 0,
+    walk: 0,
+  };
+  rearm(f);
+  return f;
+}
+
+function rearm(f) {
+  f.melee = null; // the melee slot: a picked-up weapon (MELEE key), or null for fists
+  f.active = 'gun'; // the slot used last ('gun' or 'melee'): that weapon is drawn in hand, the other on the back
+  f.blade = null; // a melee weapon that goes in the gun slot (the trident)
+  f.swingWeapon = null; // which weapon the current swing uses (null = fists)
+  f.holding = -1; // seconds the melee button has been held (to throw or charge), or -1
+  f.comboN = 0; // machete: hits in a row so far
+  f.comboT = 0; // machete: seconds left to land the next one
+  f.bladeHold = -1; // seconds the shoot button has been held with the trident, or -1
+  f.chain = null; // the trident out on its chain: { phase: out | back | pull, x, y, vx, vy, victim }
+  f.uses = 0; // bites taken out of the melee weapon (the ham, the carrot)
+  f.throwCd = 0; // seconds until a weapon you keep when throwing (the cleaver) can be thrown again
+  f.style = 0; // the style meter, 0..1 (see STYLE)
+  f.styleHeadCd = 0; // seconds until a headshot fills it again
+  f.styleEvadeCd = 0;
+  f.gunHitT = 0; // seconds left for a melee hit to count as following up your shot
+  f.swingAlt = false; // the swing is the weapon's follow-up (the halberd's sweep)
+  f.followT = 0; // seconds left to attack again for the follow-up
+  f.followQueued = false; // attacked again during the swing: the follow-up comes right after
+  f.spinHit = {}; // morning star: fighter id -> seconds until the spinning ball can hit them again
+  if (f.armed) giveGun(f, 'pistol');
+  else Object.assign(f, { gun: null, hasGun: false, ammo: 0, spareMags: 0, reload: 0, fireCd: 0, active: 'melee' });
+  f.grenades = []; // grenade kinds carried, first picked up first thrown
+  f.cook = -1; // seconds the grenade in hand has been cooking, or -1
+  f.cooking = null; // the kind of grenade in hand
+}
+
+function giveGun(f, key) {
+  const g = GUNS[key];
+  f.gun = key;
+  f.hasGun = true;
+  f.blade = null;
+  f.ammo = g.magazineSize;
+  f.spareMags = g.magazines - 1;
+  f.reload = 0;
+  f.fireCd = 0;
+  f.gunHold = -1; // seconds the shoot button has been held drawing the bow / charging the railgun
+}
+
+// Advance one tick. inputs[i] is fighter i's input (see input.js).
+export function step(world, inputs) {
+  const st = getStage(world.stage);
+  world.events = [];
+  world.tick++;
+  if (world.phase === 'countdown') {
+    world.timer -= DT;
+    if (world.timer <= 0) {
+      world.phase = 'play';
+      world.events.push({ type: 'go' });
+    }
+  } else if (world.phase === 'over') {
+    world.timer -= DT;
+  }
+  const canAct = world.phase === 'play';
+  updateMovers(world, st);
+  updateFootholds(world, st);
+  if (canAct) updateChains(world, st);
+  for (const f of world.fighters) updateFighter(world, st, f, (canAct && inputs[f.id]) || NEUTRAL, canAct);
+  updateBullets(world, st);
+  updateBarrels(world, st);
+  if (canAct) {
+    updateSpikes(world, st);
+    updateGrenades(world, st);
+    updateAilments(world);
+    world.paints = world.paints.filter((p) => (p.t -= DT) > 0);
+    world.puddles = world.puddles.filter((p) => (p.t -= DT) > 0);
+    world.holes = world.holes.filter((h) => (h.t -= DT) > 0);
+    for (const c of world.ammoChests) c.cd = Math.max(0, c.cd - DT);
+    updateItems(world, st);
+    updateLoot(world, st);
+    updatePickups(world, st);
+    updateStorm(world);
+    enforceStormWall(world, st);
+  }
+  for (const f of world.fighters) checkBlastZone(world, st, f);
+  checkGameOver(world);
+  return world;
+}
+
+// A player who disconnects mid-match is out; the match carries on without them.
+export function removeFighter(world, id) {
+  const f = world.fighters[id];
+  if (!f) return;
+  f.stocks = 0;
+  f.state = 'out';
+}
+
+export const center = (f) => ({ x: f.x, y: f.y - F.h / 2 });
+const low = (f) => f.crouching || f.blocking === 'crouch';
+export const aimOrigin = (f) => ({ x: f.x, y: f.y - (low(f) ? (f.tucked ? 8 : 14) : 22) });
+export const bodyHeight = (f) => (low(f) ? (f.tucked ? F.tuckH : F.crouchH) : F.h);
+// Where the gun is held: chest, waist or shoulder by its weight (see HOLD), lower when crouched.
+export const gunOrigin = (f) => ({ x: f.x, y: f.y - bodyHeight(f) * HOLD[GUNS[f.gun]?.weight ?? 'light'] });
+// The head: the top of the body, as tall as HEADSHOT.height standing, shorter when crouched.
+const headBottom = (v) => bodyRect(v).y + (HEADSHOT.height * bodyHeight(v)) / F.h;
+
+// Is low cover right beside this fighter, on the same floor?
+function besideCover(st, f) {
+  const half = F.w / 2;
+  return st.blocks.some((b) => {
+    if (!b.cover || Math.abs(b.y + b.h - f.y) > 1) return false;
+    const gapRight = b.x - (f.x + half);
+    const gapLeft = f.x - half - (b.x + b.w);
+    return (gapRight >= 0 && gapRight <= F.tuckReach) || (gapLeft >= 0 && gapLeft <= F.tuckReach);
+  });
+}
+
+// --- Collision helpers ------------------------------------------------------------------------
+
+// Everything solid right now: blocks, spike walls, standing barrels.
+export function solids(world, st = getStage(world.stage)) {
+  const out = [];
+  for (const b of world.live ?? st.blocks) if (!b.oneWay) out.push(b);
+  for (const s of st.spikes) out.push(spikeBase(s));
+  for (const b of world.barrels) if (!b.gone) out.push(barrelRect(b));
+  return out;
+}
+
+// A spike wall is a solid column with spikes on its `face` side; a spike floor (`up`) is a solid
+// row with the spikes standing on top of it.
+const spikeBase = (s) => (s.up ? { x: s.x, y: s.y + TILE, w: s.width * TILE, h: TILE } : { x: s.x, y: s.y, w: TILE, h: s.height * TILE });
+const spikeZone = (s) =>
+  s.up ? { x: s.x, y: s.y, w: s.width * TILE, h: TILE + 2 } : { x: s.face > 0 ? s.x + TILE : s.x - SPIKES.depth, y: s.y, w: SPIKES.depth + 2, h: s.height * TILE };
+
+const barrelRect = (b) => ({ x: b.x - BARREL.w / 2, y: b.y - BARREL.h, w: BARREL.w, h: BARREL.h, barrel: b });
+// The hurtbox: same for every animation, shorter while crouching.
+const bodyRect = (f) => ({ x: f.x - F.w / 2, y: f.y - bodyHeight(f), w: F.w, h: bodyHeight(f) });
+
+// First thing a segment from a to b hits, as a fraction t of the way (0..1), or null.
+export function segmentHitsRect(ax, ay, bx, by, r) {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = bx - ax;
+  const dy = by - ay;
+  for (const [p, q] of [
+    [-dx, ax - r.x],
+    [dx, r.x + r.w - ax],
+    [-dy, ay - r.y],
+    [dy, r.y + r.h - ay],
+  ]) {
+    if (p === 0) {
+      if (q < 0) return null;
+    } else {
+      const t = q / p;
+      if (p < 0) t0 = Math.max(t0, t);
+      else t1 = Math.min(t1, t);
+      if (t0 > t1) return null;
+    }
+  }
+  return t0;
+}
+
+export function lineOfSight(world, ax, ay, bx, by) {
+  if (inCloud(world, bx, by) || inCloud(world, ax, ay)) return false;
+  return !solids(world).some((r) => segmentHitsRect(ax, ay, bx, by, r) !== null);
+}
+
+// Is there floor (solid or thin, or a standing barrel) below this point within `depth`? Spikes
+// don't count.
+export function groundBelow(world, x, y, depth) {
+  const st = getStage(world.stage);
+  for (const r of [...(world.live ?? st.blocks), ...world.barrels.filter((b) => !b.gone).map(barrelRect)]) {
+    if (x >= r.x && x <= r.x + r.w && r.y >= y && r.y <= y + depth) return true;
+  }
+  return false;
+}
+
+// --- Fighters ---------------------------------------------------------------------------------
+
+function takePresses(f, input) {
+  const press = {};
+  for (const k of ['jp', 'sp', 'mp', 'dp', 'rp', 'hp', 'ep', 'gp', 'xp', 'cp']) {
+    press[k] = (input[k] ?? 0) !== f.seen[k];
+    f.seen[k] = input[k];
+  }
+  return press;
+}
+
+function updateFighter(world, st, f, input, canAct) {
+  const press = takePresses(f, input);
+  if (f.state === 'dead') {
+    f.respawn -= DT;
+    if (f.respawn <= 0) respawn(world, st, f);
+    return;
+  }
+  if (f.state !== 'ok') return;
+
+  f.hitstun = Math.max(0, f.hitstun - DT);
+  f.invincible = Math.max(0, f.invincible - DT);
+  f.stamina = Math.min(1, f.stamina + DT / DASH.recharge);
+  f.dash = Math.max(0, f.dash - DT);
+  f.dodge = Math.max(0, f.dodge - DT);
+  f.fireCd = Math.max(0, f.fireCd - DT);
+  f.flash = Math.max(0, f.flash - DT);
+  f.muzzle = Math.max(0, f.muzzle - DT);
+  f.slip = Math.max(0, f.slip - DT);
+  f.haste = Math.max(0, f.haste - DT);
+  if (f.drop > 0) f.drop -= DT;
+  if (f.hitstun <= 0) f.stunned = false;
+  if (f.blockDrop >= 0) {
+    f.blockDrop += DT;
+    if (f.blockDrop >= BLOCK.dropFrames / BLOCK.dropFps) f.blockDrop = -1;
+  }
+  if (f.reload > 0) {
+    f.reload -= DT;
+    if (f.reload <= 0) {
+      f.reload = 0;
+      f.ammo = GUNS[f.gun].magazineSize;
+      f.spareMags--;
+    }
+  }
+  if (f.pendingLaunch) {
+    // Frozen in place by a 100% keyboard word... then launched.
+    const pl = f.pendingLaunch;
+    pl.left -= DT;
+    f.vx = 0;
+    f.vy = 0;
+    f.stunned = true;
+    f.hitstun = Math.max(f.hitstun, pl.left + DT);
+    if (pl.left > 0) return;
+    f.pendingLaunch = null;
+    hit(world, f, 0, pl.dx, pl.dy, pl.base, pl.growth, pl.by);
+    world.events.push({ type: 'launch', id: f.id, x: f.x, y: f.y - F.h / 2 });
+  }
+  const control = canAct && f.hitstun <= 0;
+  const p = control ? press : {};
+  const inp = control ? input : NEUTRAL;
+
+  if (f.hidden >= 0) {
+    // Hidden in a doorway: the only option is to come out (hide again, jump or move).
+    if (!(control && (p.hp || p.jp || p.dp || inp.mx !== 0))) {
+      f.vx = 0;
+      f.vy = 0;
+      return;
+    }
+    f.hidden = -1;
+    world.events.push({ type: 'unhide', id: f.id, x: f.x, y: f.y });
+  } else if (control && p.hp && !inp.crouch) {
+    hide(world, st, f);
+  }
+  if (control && p.ep) pickUp(world, f);
+  // Cycle grenades: the next one to throw goes to the back.
+  if (control && p.cp && f.grenades.length > 1) {
+    f.grenades.push(f.grenades.shift());
+    world.events.push({ type: 'swap', id: f.id, x: f.x, y: f.y - F.h });
+  }
+  if (f.active === 'gun' && !f.hasGun && !f.blade) f.active = 'melee';
+
+  move(world, f, inp, p, control);
+  useGun(world, f, inp, p);
+  useMelee(world, f, inp, p);
+  useGrenade(world, f, inp, p, control);
+
+  const preVx = f.vx;
+  const preVy = f.vy;
+  const wasGrounded = f.grounded;
+  // A black hole drags you in.
+  holePull(world, f);
+  moveX(world, st, f, f.vx * DT);
+  moveY(world, st, f, f.vy * DT);
+  if (f.hitstun > 0) {
+    // Slammed into the floor or a wall while tumbling: bounce instead of stopping dead.
+    if (f.grounded && preVy > 300) {
+      f.vy = -preVy * 0.45;
+      f.grounded = false;
+      world.events.push({ type: 'dust', x: f.x, y: f.y });
+    }
+    if (f.vx === 0 && Math.abs(preVx) > 200) f.vx = -preVx * 0.5;
+  }
+  if (f.grounded && !wasGrounded) world.events.push({ type: 'dust', x: f.x, y: f.y });
+  f.walk = f.grounded && Math.abs(f.vx) > 10 ? f.walk + (DT * Math.abs(f.vx)) / 12 : 0;
+}
+
+function move(world, f, input, press, control) {
+  f.slimed = f.grounded && inSlime(world, f);
+  const glued = f.grounded && (f.onGlue || f.slimed);
+  if (glued) {
+    // Stuck to a glued floor: no jumping off it (only walking off).
+    f.coyote = 0;
+    f.jumpsLeft = 0;
+  }
+  if (f.grounded && !glued) {
+    f.coyote = F.coyote;
+    f.jumpsLeft = F.airJumps + (f.rune ? ITEMS[f.rune].rune.airJumps ?? 0 : 0);
+    f.fastFall = false;
+  } else {
+    f.coyote = Math.max(0, f.coyote - DT);
+  }
+  // Down twice quickly on a thin platform drops through it; down in the air falls fast (further below).
+  f.downTap = Math.max(0, f.downTap - DT);
+  if (control && press.dp) {
+    if (f.downTap > 0 && f.grounded && f.onThin) {
+      f.drop = F.dropTime;
+      f.grounded = false;
+      f.downTap = 0;
+    } else {
+      f.downTap = F.doubleTap;
+    }
+  }
+  f.buffer = press.jp ? F.jumpBuffer : Math.max(0, f.buffer - DT);
+
+  // Dash: the dodge button, paid for from the stamina bar (half of it). A shove the way you hold (backwards if you
+  // hold nothing), untouchable at the start.
+  if (control && press.xp && f.stamina >= DASH.cost && f.dash <= 0 && f.swing < 0 && !f.chain && !glued) {
+    const dir = Math.sign(input.mx) || -f.facing;
+    f.vx = dir * DASH.speed;
+    if (!f.grounded) f.vy = Math.min(f.vy, 0) * 0.3;
+    Object.assign(f, { dash: DASH.time, dodge: DASH.iframes, stamina: f.stamina - DASH.cost });
+    world.events.push({ type: 'dodge', id: f.id, x: f.x, y: f.y, dir });
+  }
+
+  // Crouch: hold crouch on the ground. Block: hold block on the ground (crouched or standing).
+  // Neither lets you walk; letting go of block starts the drop, when parries happen.
+  const wasBlocking = f.blocking;
+  f.crouching = control && f.grounded && input.crouch && f.dash <= 0 && (f.swing < 0 || f.swingStance === 'crouch');
+  // (Holding the trident's chain, or mid-dash, you can't block.)
+  f.blocking = control && f.grounded && input.block && f.swing < 0 && !f.chain && f.dash <= 0 ? (f.crouching ? 'crouch' : 'stand') : null;
+  f.tucked = low(f) && besideCover(getStage(world.stage), f);
+  if (wasBlocking && !f.blocking && control) {
+    f.blockDrop = 0;
+    f.dropStance = wasBlocking;
+  }
+  if (f.blocking) f.blockDrop = -1;
+
+  // Ground swings root you in place; air swings keep your drift. Holding the trident's chain
+  // roots you too.
+  const rooted = (f.swing >= 0 && f.grounded && !f.swingRunning) || f.crouching || f.blocking !== null || !!f.chain;
+  // (Slapped with the fish: any floor is ice for a while.)
+  const icy = f.onIce || f.slip > 0;
+  const dir = rooted ? 0 : Math.sign(input.mx);
+  if (f.dash > 0) {
+    // Mid-dash: carried by the shove.
+  } else if (dir !== 0) {
+    const accel = f.grounded ? F.groundAccel * (icy ? ICE.accel : 1) : F.airAccel;
+    f.vx = approach(f.vx, dir * F.runSpeed * speedOf(world, f, glued), accel * DT);
+  } else {
+    const drag = f.inHole ? 0 : f.grounded ? F.groundFriction * (icy ? ICE.friction : 1) : f.hitstun > 0 ? F.hitstunAirDrag : F.airFriction;
+    f.vx = approach(f.vx, 0, drag * DT);
+  }
+
+  // Face where you aim; with no aim, face where you walk.
+  if (control) {
+    const len = Math.hypot(input.ax, input.ay);
+    if (len > 0.1) {
+      f.aimX = input.ax / len;
+      f.aimY = input.ay / len;
+    } else {
+      f.aimX = f.facing;
+      f.aimY = 0;
+    }
+    if (Math.abs(f.aimX) > 0.1) f.facing = f.aimX > 0 ? 1 : -1;
+    else if (dir !== 0) f.facing = dir;
+  }
+
+  if (control && f.buffer > 0 && !rooted) {
+    if (f.coyote > 0) {
+      f.vy = -JUMP_SPEED;
+      f.grounded = false;
+      f.coyote = 0;
+      f.buffer = 0;
+      f.cutting = true;
+      world.events.push({ type: 'dust', x: f.x, y: f.y });
+    } else if (f.jumpsLeft > 0) {
+      f.vy = -AIR_JUMP_SPEED;
+      f.jumpsLeft--;
+      f.buffer = 0;
+      f.cutting = true;
+      f.fastFall = false;
+      world.events.push({ type: 'airjump', x: f.x, y: f.y });
+    }
+  }
+  if (f.cutting && (f.vy >= 0 || !control)) f.cutting = false;
+  if (f.cutting && !input.jump) {
+    f.vy *= F.jumpCut;
+    f.cutting = false;
+  }
+
+  // Down in the air: fall fast.
+  if (control && press.dp && !f.grounded && f.vy > -100) f.fastFall = true;
+
+  // Launched fighters use the lighter rising gravity, so big hits carry them far.
+  const g = f.inHole ? 0 : GRAVITY * (f.vy > 0 && f.hitstun <= 0 ? F.fallGravityMul : 1);
+  const cap = f.hitstun > 0 ? F.hitstunMaxFall : F.maxFall;
+  if (f.fastFall) f.vy = Math.max(f.vy, F.fastFall);
+  else f.vy = Math.min(f.vy + g * DT, Math.max(cap, f.vy));
+}
+
+// How fast you can run right now, as a share of the normal speed: some big guns slow you while you
+// fire them; glue slows everyone; so do carrying the anvil, spinning the morning star and walking
+// on someone else's paint. A bite of carrot speeds you up.
+function speedOf(world, f, glued) {
+  const m = f.melee ? MELEE[f.melee] : null;
+  let k = f.hasGun && f.fireCd > 0 ? GUNS[f.gun].slowWhileFiring ?? 1 : 1;
+  if (glued) k *= GLUE.slow;
+  if (m?.carrySlow) k *= m.carrySlow;
+  if (m?.spin && f.holding >= m.spin.after) k *= m.spin.slow;
+  // (Winding up the bat: slower and slower, down to `power.slow` when it's full.)
+  if (m?.power?.slow && f.holding >= 0) k *= 1 - (1 - m.power.slow) * Math.min(1, f.holding / m.power.time);
+  if (f.haste > 0) k *= MELEE.carrot.eat.speed;
+  if (f.rune) k *= ITEMS[f.rune].rune.speed ?? 1;
+  if (f.grounded && onPaint(world, f)) k *= MELEE.roller.paint.slow;
+  return k;
+}
+
+// Is this fighter standing on paint someone else rolled?
+const onPaint = (world, f) => (world.paints ?? []).some((p) => p.owner !== f.id && Math.abs(p.y - f.y) < 1 && f.x >= p.x1 && f.x <= p.x2);
+
+function moveX(world, st, f, dx) {
+  f.x += dx;
+  const half = F.w / 2;
+  for (const r of solids(world, st)) {
+    if (f.y <= r.y || f.y - F.h >= r.y + r.h) continue;
+    if (f.x + half <= r.x || f.x - half >= r.x + r.w) continue;
+    // A low ledge is stepped up onto instead of walked into.
+    const rise = f.y - r.y;
+    if (rise > 0 && rise <= (f.grounded ? F.stepUp : 0) && !r.barrel) {
+      f.y = r.y;
+      continue;
+    }
+    f.x = dx > 0 || (dx === 0 && f.x < r.x + r.w / 2) ? r.x - half : r.x + r.w + half;
+    f.vx = 0;
+  }
+}
+
+function moveY(world, st, f, dy) {
+  const prevBottom = f.y;
+  const prevTop = f.y - F.h;
+  const half = F.w / 2;
+  f.y += dy;
+  f.grounded = false;
+  f.onThin = false;
+  f.onIce = false;
+  f.onGlue = false;
+  const thins = (world.live ?? st.blocks).filter((b) => b.oneWay);
+  // (slack: how far a moving platform rose this tick, so it still catches feet it rose past.)
+  for (const r of solids(world, st)) {
+    if (f.x + half <= r.x || f.x - half >= r.x + r.w) continue;
+    if (dy >= 0 && prevBottom <= r.y + 0.01 + (r.slack ?? 0) && f.y >= r.y) {
+      f.y = r.y;
+      f.vy = Math.min(f.vy, 0);
+      f.grounded = true;
+      f.onIce = !!r.ice;
+      f.onGlue = !!r.glue;
+    } else if (dy < 0 && prevTop >= r.y + r.h - 0.01 && f.y - F.h < r.y + r.h) {
+      f.y = r.y + r.h + F.h;
+      f.vy = 0;
+    }
+  }
+  if (f.drop > 0 || f.grounded) return;
+  for (const r of thins) {
+    if (f.x + half <= r.x || f.x - half >= r.x + r.w) continue;
+    if (dy >= 0 && prevBottom <= r.y + 0.01 + (r.slack ?? 0) && f.y >= r.y) {
+      f.y = r.y;
+      f.vy = Math.min(f.vy, 0);
+      f.grounded = true;
+      f.onThin = true;
+      f.onIce = !!r.ice;
+      f.onGlue = !!r.glue;
+    }
+  }
+}
+
+// --- Gun --------------------------------------------------------------------------------------
+
+function useGun(world, f, input, press) {
+  if (f.blocking) return;
+  if (f.blade) {
+    const m = MELEE[f.blade];
+    if (f.chain) return; // the trident is out on its chain
+    if (m.chain) {
+      // The trident: a tap thrusts (when you let go); holding throws it on its chain.
+      if (f.hitstun > 0) f.bladeHold = -1;
+      else if (press.sp && f.swing < 0) f.bladeHold = 0;
+      if (f.bladeHold < 0) return;
+      if (input.shoot) {
+        f.bladeHold += DT;
+        if (f.bladeHold >= m.holdToThrow) throwTrident(world, f, m);
+        return;
+      }
+      f.bladeHold = -1;
+      return startSwing(world, f, m, f.blade);
+    }
+    // The katana in the gun slot: the shoot button swings it.
+    if (press.sp && f.swing < 0) startSwing(world, f, m, f.blade);
+    return;
+  }
+  if (!f.hasGun || f.swing >= 0) {
+    // Nothing in the gun slot: the shoot button punches (or swings the melee weapon).
+    if (!f.hasGun && press.sp) press.mp = true;
+    return;
+  }
+  const g = GUNS[f.gun];
+  const empty = f.ammo === 0 && f.reload <= 0 && f.spareMags > 0;
+  // An empty gun reloads by itself, including after a swing or a hit interrupted the reload.
+  if ((press.rp || empty) && f.reload <= 0 && f.spareMags > 0 && f.ammo < g.magazineSize) {
+    f.reload = g.reloadTime;
+    world.events.push({ type: 'reload', id: f.id, x: f.x, y: f.y });
+  }
+  // (In the banner's melee-only zone guns don't fire.)
+  if (inHaven(world, f.x)) {
+    if (press.sp) world.events.push({ type: 'jam', id: f.id, x: f.x, y: f.y - 20 });
+    f.gunHold = -1;
+    return;
+  }
+  if (f.ammo === 0 && f.spareMags === 0) return windUpGunThrow(world, f, input, press);
+  if (g.charge) return chargeGun(world, f, g, input, press);
+  const pull = press.sp || (g.automatic && input.shoot);
+  if (!pull || f.reload > 0 || f.fireCd > 0) return;
+  if (f.ammo > 0) fire(world, f, g);
+}
+
+// Out of ammo for good: a tap just clicks (you can keep the empty gun); holding the trigger winds up
+// a throw (GUN_THROW.hold s), and letting go once it's ready throws it. A hit loses the wind-up.
+function windUpGunThrow(world, f, input, press) {
+  if (f.hitstun > 0) f.gunHold = -1;
+  if (press.sp) {
+    f.gunHold = 0;
+    world.events.push({ type: 'dry', id: f.id, x: f.x, y: f.y - 20 });
+  }
+  if (f.gunHold < 0) return;
+  if (input.shoot) {
+    f.gunHold += DT;
+    return;
+  }
+  const ready = f.gunHold >= GUN_THROW.hold;
+  f.gunHold = -1;
+  if (ready) throwGun(world, f);
+}
+
+// Guns you hold to charge (the bow's draw, the railgun): press to start, let go to fire. The bow
+// fires at whatever draw it has (at least `charge.min`); the railgun only fully charged. A hit
+// loses the charge.
+function chargeGun(world, f, g, input, press) {
+  if (f.hitstun > 0) f.gunHold = -1;
+  if (press.sp) {
+    if (f.reload <= 0 && f.fireCd <= 0 && f.ammo > 0) f.gunHold = 0;
+  }
+  if (f.gunHold < 0) return;
+  if (input.shoot) {
+    f.gunHold += DT;
+    return;
+  }
+  const power = Math.min(1, f.gunHold / g.charge.time);
+  f.gunHold = -1;
+  if (g.charge.full && power < 1) return;
+  fire(world, f, g, Math.max(g.charge.min ?? 0, power));
+}
+
+// power: how charged the shot is (the bow's draw), 0..1.
+function fire(world, f, g, power = 1) {
+  f.active = 'gun';
+  if (!world.infiniteAmmo) f.ammo--;
+  f.fireCd = g.fireInterval;
+  f.muzzle = 0.05;
+  const o = gunOrigin(f);
+  // The muzzle: along the aim, then off the aim line by the gun's drop (mirrored aiming left,
+  // where the sprite is flipped).
+  const side = f.aimX < 0 ? -1 : 1;
+  const mx = o.x + f.aimX * g.muzzle - f.aimY * g.muzzleDrop * side;
+  const my = o.y + f.aimY * g.muzzle + f.aimX * g.muzzleDrop * side;
+  world.events.push({ type: 'shoot', id: f.id, x: mx, y: my, dir: -f.facing, gun: f.gun });
+  if (!f.grounded) {
+    f.vx -= f.aimX * g.recoil;
+    f.vy -= f.aimY * g.recoil;
+  }
+  if (f.ammo === 0 && f.spareMags > 0) {
+    f.reload = g.reloadTime;
+    world.events.push({ type: 'reload', id: f.id, x: f.x, y: f.y });
+  }
+  // Muzzle jammed into a wall: the shot stops there.
+  let blocked = null;
+  for (const r of solids(world)) {
+    const t = segmentHitsRect(o.x, o.y, mx, my, r);
+    if (t !== null && (!blocked || t < blocked)) blocked = t;
+  }
+  if (g.beam) return railBeam(world, f, g, o.x, o.y);
+  if (blocked !== null) {
+    const at = { x: o.x + (mx - o.x) * blocked, y: o.y + (my - o.y) * blocked };
+    if (g.jackpot) return cashBurst(world, at, g.jackpot, f.id);
+    if (g.explode) blast(world, at, g.explode, f.id);
+    else world.events.push({ type: 'spark', x: at.x, y: at.y, dx: -f.aimX, dy: -f.aimY });
+    return;
+  }
+  // Someone right up against you, inside the barrel's reach: the shot starts from your shoulder,
+  // so point-blank shots land instead of starting past them.
+  const pointBlank = world.fighters.some((v) => v !== f && v.state === 'ok' && v.hidden < 0 && segmentHitsRect(o.x, o.y, mx, my, bodyRect(v)) !== null);
+  const sx = pointBlank ? o.x : mx;
+  const sy = pointBlank ? o.y : my;
+  const spreadDegrees = spreadOf(f, g);
+  // Every shot fired crouched drains stamina, paid for or not: hold the trigger and the bar stays
+  // empty (and the aim loose); let it refill to get the steady aim back.
+  if (f.grounded && low(f) && !g.steadySpread) f.stamina = Math.max(0, f.stamina - STAMINA.crouchShot);
+  // Shotgun: its pellets share a count of hits on each person (see shotHits).
+  const volley = g.knockbackShare ? { need: Math.floor(g.pellets * g.knockbackShare) + 1, hits: {} } : null;
+  for (let n = 0; n < g.pellets; n++) {
+    const spread = ((world.rng() * 2 - 1) * spreadDegrees * Math.PI) / 180;
+    const c = Math.cos(spread);
+    const s = Math.sin(spread);
+    const dx = f.aimX * c - f.aimY * s;
+    const dy = f.aimX * s + f.aimY * c;
+    let [speed, damage, kb, growth, light, look] = [g.bulletSpeed, g.damage, g.knockback, g.knockbackGrowth, g.weight === 'light', f.gun];
+    if (g.cash) {
+      // Make It Rain: each shot is a coin, a bill, a gold coin or (rarely) a diamond.
+      const cash = pickCash(world);
+      [speed, damage, kb, growth, light, look] = [speed * (cash.speedMul ?? 1), cash.damage, cash.knockback ?? 0, cash.knockbackGrowth ?? 0, !cash.knockback, cash.look];
+    }
+    if (g.charge) {
+      // The bow: a short draw is slower and weaker, and only a long one pushes.
+      [speed, damage, light] = [speed * (0.4 + 0.6 * power), damage * power, power < g.charge.heavyAt];
+    }
+    // (The crystal ball: shots home in, but hit for less.)
+    if (f.homing > 0) damage *= ITEMS.crystal.homing.damage;
+    world.bullets.push({
+      id: world.nextBullet++, owner: f.id, x: sx, y: sy, vx: dx * speed, vy: dy * speed - (g.lift ?? 0), gravity: g.gravity ?? 0, life: g.bulletRange / speed, thrown: false,
+      damage, kb, growth, light, explode: g.explode ?? null, bounces: g.bounces ?? 0, grow: g.bounceGrowth ?? 0, size: 1, look, volley,
+      pierce: g.pierce ? [] : null, burn: g.burn ?? 0, stick: !!g.stick, hops: g.hops ?? 0, spore: g.spore ?? null, jackpot: g.jackpot ?? null, homing: f.homing > 0,
+    });
+  }
+}
+
+// How wide a gun sprays right now (degrees each side): steadiest crouched, then standing still,
+// shakier on the move, worst in the air. Works on a view's fighter too (for the crosshair), where
+// `walk` says whether they're moving.
+export function spreadOf(f, g = GUNS[f.gun]) {
+  const a = ACCURACY;
+  if (!g) return 0;
+  if (g.steadySpread) return g.spreadDegrees * a.still;
+  if (!f.grounded) return g.spreadDegrees * a.air + a.airExtra;
+  // Crouched: steadiest, as long as there's stamina to pay for the shot (see fire).
+  if (low(f)) return f.stamina >= STAMINA.crouchShot ? g.spreadDegrees * a.crouch : g.spreadDegrees * a.still;
+  const moving = f.vx !== undefined ? Math.abs(f.vx) >= 10 : f.walk > 0;
+  return moving ? g.spreadDegrees * a.moving + a.movingExtra : g.spreadDegrees * a.still;
+}
+
+// Out of ammo for good: the gun itself is thrown, tumbling (drawn as that gun).
+function throwGun(world, f) {
+  const t = GUN_THROW;
+  const o = gunOrigin(f);
+  f.hasGun = false;
+  // (A light gun comes back to you, boomerang-style; see comeBack.)
+  const back = GUNS[f.gun].weight === 'light' && !GUNS[f.gun].heavyThrow ? { phase: 'out', t: 0 } : null;
+  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.gun, x: o.x, y: o.y, vx: f.aimX * t.speed, vy: f.aimY * t.speed - 60, gravity: t.gravity, life: 1.5, thrown: true, damage: t.damage, kb: t.knockback, growth: t.knockbackGrowth, back });
+  f.gun = null;
+}
+
+// A thrown light gun on its way back: it arcs toward its thrower, aimed afresh each tick to land
+// on them `GUN_THROW.back` s after it turned round. Caught (touching them), it's theirs again,
+// empty, and fills their style meter; if they've a gun again by then, they just catch the style.
+// Coming back it can't hurt anyone, and a wall stops it for good.
+function comeBack(world, b, walls) {
+  const t = GUN_THROW;
+  const f = world.fighters[b.owner];
+  b.back.t += DT;
+  const left = t.back - b.back.t;
+  if (f?.state === 'ok' && left > -0.4) {
+    const c = center(f);
+    if (Math.hypot(c.x - b.x, c.y - b.y) <= t.catchReach) {
+      // (It goes back in the gun slot, replacing whatever's there now.)
+      Object.assign(f, { gun: b.kind, hasGun: true, blade: null, bladeHold: -1, ammo: 0, spareMags: 0, reload: 0, fireCd: 0, gunHold: -1, active: 'gun' });
+      addStyle(world, f, STYLE.catch);
+      world.events.push({ type: 'catch', id: f.id, x: b.x, y: b.y });
+      return false;
+    }
+    if (left > 0.05) {
+      // The arc that lands on them in the time left.
+      b.vx = (c.x - b.x) / left;
+      b.vy = (c.y - b.y) / left - 0.5 * t.gravity * left;
+    }
+  }
+  b.vy += t.gravity * DT;
+  const nx = b.x + b.vx * DT;
+  const ny = b.y + b.vy * DT;
+  if (walls.some((r) => segmentHitsRect(b.x, b.y, nx, ny, r) !== null)) return false;
+  b.x = nx;
+  b.y = ny;
+  return (b.life -= DT) > -1;
+}
+
+// Style: add to the meter (it tops out at full).
+function addStyle(world, f, amount) {
+  if (f.state !== 'ok') return;
+  const was = f.style;
+  f.style = Math.min(1, f.style + amount);
+  if (f.style >= 1 && was < 1) world.events.push({ type: 'stylefull', id: f.id, x: f.x, y: f.y - F.h });
+}
+
+// A full style meter reloads your gun on the spot (a full magazine, even an empty-for-good one),
+// as soon as there's something to reload: not a special gun, nor a full one.
+function styleReload(world, f) {
+  const g = f.hasGun && f.gun ? GUNS[f.gun] : null;
+  if (!g || g.weight === 'special' || f.ammo >= g.magazineSize) return;
+  Object.assign(f, { ammo: g.magazineSize, reload: 0, gunHold: -1, style: 0 });
+  world.events.push({ type: 'stylereload', id: f.id, x: f.x, y: f.y - F.h });
+}
+
+// Each bullet checks the whole stretch it travels this tick, so fast shots never skip through
+// a fighter or a thin wall. Solid cover stops it (or it glances off, if it bounces); thin
+// platforms don't. Shots that explode go off where they stop.
+function updateBullets(world, st) {
+  const walls = solids(world, st);
+  world.bullets = world.bullets.filter((b) => {
+    if (b.back?.phase === 'back') return comeBack(world, b, walls);
+    // (A thrown light gun turns round after a moment.)
+    if (b.back && (b.back.t += DT) >= GUN_THROW.out) Object.assign(b.back, { phase: 'back', t: 0 });
+    // The banner's zone: shots and thrown things vanish into it (thrown melee weapons don't).
+    if (world.haven && inHaven(world, b.x) && !(b.thrown && MELEE[b.kind])) {
+      world.events.push({ type: 'fizzle', x: b.x, y: b.y });
+      return false;
+    }
+    if (b.homing) homeIn(world, b);
+    b.vy += b.gravity * DT;
+    const nx = b.x + b.vx * DT;
+    const ny = b.y + b.vy * DT;
+    let best = null;
+    let bestT = Infinity;
+    for (const r of walls) {
+      const t = segmentHitsRect(b.x, b.y, nx, ny, r);
+      if (t !== null && t < bestT) [best, bestT] = [r, t];
+    }
+    for (const v of world.fighters) {
+      if (v.id === b.owner || v.state !== 'ok' || v.hidden >= 0 || v.dodge > 0) continue; // bullets fly past hidden and dodging fighters
+      if (b.pierce?.includes(v.id)) continue; // (cards and flames go through: once each)
+      // (Big shots, the grown star bolts, are easier to hit with.)
+      const pad = ((b.size ?? 1) - 1) * 2;
+      const body = bodyRect(v);
+      const t = segmentHitsRect(b.x, b.y, nx, ny, { x: body.x - pad, y: body.y - pad, w: body.w + pad * 2, h: body.h + pad * 2 });
+      // Blocking with the pan: shots from the front ring off it.
+      const pan = !!v.blocking && !!v.melee && !!MELEE[v.melee].blocksBullets && !b.thrown && Math.sign(b.vx) === -v.facing;
+      const mirror = v.reflects > 0 && !b.thrown;
+      if (t !== null && t < bestT) [best, bestT] = [{ fighter: v, pan, mirror }, t];
+    }
+    if (best) {
+      const px = b.x;
+      const py = b.y;
+      b.x += (nx - b.x) * bestT;
+      b.y += (ny - b.y) * bestT;
+      const len = Math.hypot(b.vx, b.vy) || 1;
+      if (b.bounces > 0 && !best.fighter && !best.barrel) {
+        // Glance off: flip whichever way it came in through the wall's side.
+        b.bounces--;
+        const fromSide = px <= best.x || px >= best.x + best.w;
+        if (fromSide) b.vx = -b.vx;
+        else b.vy = -b.vy;
+        if (b.grow) {
+          // The star bolt grows with each bounce: faster, bigger, harder.
+          b.vx *= b.grow;
+          b.vy *= b.grow;
+          b.damage *= b.grow;
+          b.kb *= b.grow;
+          b.growth *= b.grow;
+          b.size = (b.size ?? 1) * b.grow;
+        }
+        b.x -= (nx - px) * 0.01;
+        b.y -= (ny - py) * 0.01;
+        world.events.push({ type: 'spark', x: b.x, y: b.y, dx: b.vx / len, dy: b.vy / len });
+        return true;
+      }
+      if (best.mirror) {
+        // The mirror rune: the shot flies straight back, now the victim's.
+        const v = best.fighter;
+        v.reflects -= b.damage;
+        if (v.reflects <= 0) Object.assign(v, { rune: null, reflects: 0 });
+        Object.assign(b, { vx: -b.vx, vy: -b.vy, owner: v.id, life: Math.max(b.life, 0.6), deflected: true });
+        b.x += b.vx * DT;
+        b.y += b.vy * DT;
+        if (b.pierce) b.pierce = [];
+        world.events.push({ type: 'ting', id: v.id, x: b.x, y: b.y });
+        return true;
+      }
+      if (best.pan) {
+        world.events.push({ type: 'ting', id: best.fighter.id, x: b.x, y: b.y }, { type: 'spark', x: b.x, y: b.y, dx: -b.vx / len, dy: -b.vy / len });
+        if (b.explode) blast(world, { x: b.x, y: b.y }, b.explode, b.owner);
+        return false;
+      }
+      if (b.explode) {
+        blast(world, { x: b.x, y: b.y }, b.explode, b.owner);
+        return false;
+      }
+      if (b.jackpot) {
+        cashBurst(world, { x: b.x, y: b.y }, b.jackpot, b.owner);
+        return false;
+      }
+      if (b.look === 'slimer' && !best.fighter && !best.barrel) return slimeBounce(world, b, best, px, py);
+      if (best.fighter && b.pierce) {
+        // Cards and flames: hit them and keep going.
+        shotHits(world, best.fighter, b, b.vx / len, b.vy / len);
+        b.pierce.push(best.fighter.id);
+        world.events.push({ type: 'impact', x: b.x, y: b.y, on: 'body', thrown: false });
+        b.x = nx;
+        b.y = ny;
+        b.life -= DT;
+        return b.life > 0;
+      }
+      if (best.fighter) shotHits(world, best.fighter, b, b.vx / len, b.vy / len);
+      else if (best.barrel) damageBarrel(best.barrel, b.damage, b.owner);
+      if (b.back) {
+        // A thrown light gun: it bounces off and heads back to its thrower.
+        world.events.push({ type: 'impact', x: b.x, y: b.y, on: best.fighter ? 'body' : 'wall', thrown: true, kind: b.kind });
+        Object.assign(b.back, { phase: 'back', t: 0 });
+        b.x -= (b.vx / len) * 2;
+        b.y -= (b.vy / len) * 2;
+        return true;
+      }
+      // An arrow hitting the side of a wall sticks in it: a foothold.
+      if (b.stick && !best.fighter && !best.barrel && (px <= best.x || px >= best.x + best.w)) addFoothold(world, b.x, b.y, Math.sign(b.vx));
+      if (b.spore) sporePatch(world, b);
+      world.events.push({ type: 'impact', x: b.x, y: b.y, on: best.fighter ? 'body' : 'wall', thrown: b.thrown, kind: b.kind ?? null });
+      world.events.push({ type: 'spark', x: b.x, y: b.y, dx: -b.vx / len, dy: -b.vy / len });
+      if (b.recover) dropWeapon(world, b.kind, b.x - b.vx / len, b.y);
+      return false;
+    }
+    b.x = nx;
+    b.y = ny;
+    b.life -= DT;
+    if (b.life <= 0 && b.explode) blast(world, { x: b.x, y: b.y }, b.explode, b.owner);
+    if (b.life <= 0 && b.jackpot) cashBurst(world, { x: b.x, y: b.y }, b.jackpot, b.owner);
+    if (b.life <= 0 && b.spore) sporePatch(world, b);
+    if (b.life <= 0 && b.recover) dropWeapon(world, b.kind, b.x, b.y);
+    return b.life > 0;
+  });
+}
+
+// --- Special shots -----------------------------------------------------------------------------
+
+// The railgun: a beam straight through walls, hitting everyone along it.
+function railBeam(world, f, g, sx, sy) {
+  const ex = sx + f.aimX * g.bulletRange;
+  const ey = sy + f.aimY * g.bulletRange;
+  for (const v of world.fighters) {
+    if (v === f || v.state !== 'ok' || v.hidden >= 0) continue;
+    if (segmentHitsRect(sx, sy, ex, ey, bodyRect(v)) === null) continue;
+    hit(world, v, g.damage, f.aimX, f.aimY - 0.2, g.knockback, g.knockbackGrowth, f.id);
+  }
+  world.events.push({ type: 'beam', id: f.id, x1: sx, y1: sy, x2: ex, y2: ey });
+}
+
+// One piece of money, by the odds in CASH.
+function pickCash(world) {
+  let r = world.rng();
+  for (const c of CASH) if ((r -= c.chance) < 0) return c;
+  return CASH[0];
+}
+
+// The jackpot bursts: everyone near is pushed away (no damage), and money showers out to land
+// around (see updateLoot).
+function cashBurst(world, at, c, by) {
+  blast(world, at, { radius: c.radius, damage: 0, knockback: c.knockback, knockbackGrowth: c.knockbackGrowth }, by, null, 'jackpot');
+  showerCash(world, at, c.pieces);
+}
+
+// `pieces` of money flung out from a spot, to land around it.
+function showerCash(world, at, pieces) {
+  for (let k = 0; k < pieces; k++) {
+    const cash = pickCash(world);
+    world.loot.push({ id: world.nextLoot++, x: at.x, y: at.y, vx: (world.rng() * 2 - 1) * 170, vy: -140 - world.rng() * 170, look: cash.look, value: cash.damage * LOOT.heal, t: 0, landed: false });
+  }
+}
+
+// Black holes pull: they speed you up toward their middles (harder near the middle), and inside
+// one there's no gravity or floor friction (see move), so it lifts you and drags you along the
+// floor. Right at the middle you slow down and hang there. Someone launched fast enough can
+// still fly through.
+function holePull(world, f) {
+  f.inHole = false;
+  for (const h of world.holes) {
+    const c = center(f);
+    const dx = h.x - c.x;
+    const dy = h.y - c.y;
+    const d = Math.hypot(dx, dy);
+    if (d >= h.r || f.state !== 'ok') continue;
+    f.inHole = true;
+    f.fastFall = false;
+    const k = h.pull * (0.6 + 0.4 * (1 - d / h.r)) * DT;
+    f.vx += (dx / (d || 1)) * k;
+    f.vy += (dy / (d || 1)) * k;
+    if (d < 16) {
+      f.vx *= 0.88;
+      f.vy *= 0.88;
+    }
+  }
+}
+
+// Money falls to the floor, lies there a while (blinking near the end), and heals whoever touches it.
+function updateLoot(world, st) {
+  const walls = solids(world, st);
+  const floors = world.live ?? st.blocks;
+  world.loot = world.loot.filter((m) => {
+    m.t += DT;
+    if (!m.landed) {
+      m.vy = Math.min(m.vy + LOOT.gravity * DT, 500);
+      const x = m.x + m.vx * DT;
+      if (!walls.some((r) => x > r.x && x < r.x + r.w && m.y > r.y && m.y < r.y + r.h)) m.x = x;
+      else m.vx = 0;
+      const y = m.y + m.vy * DT;
+      const floor = m.vy > 0 && floors.find((r) => m.x >= r.x && m.x <= r.x + r.w && m.y <= r.y && y >= r.y);
+      if (floor) Object.assign(m, { y: floor.y, landed: true, vx: 0, vy: 0 });
+      else m.y = y;
+    }
+    if (m.y > st.blast.bottom || m.t > LOOT.lie + LOOT.blink) return false;
+    const v = m.landed && world.fighters.find((f) => f.state === 'ok' && Math.abs(f.x - m.x) < F.w / 2 + 3 && m.y <= f.y + 1 && m.y >= f.y - bodyHeight(f));
+    if (!v) return true;
+    v.damage = Math.max(0, v.damage - m.value);
+    world.events.push({ type: 'cash', id: v.id, x: m.x, y: m.y - 4, look: m.look });
+    return false;
+  });
+}
+
+// The ammo chests: one on each of the stage's outermost spawn points.
+function placeAmmoChests(st) {
+  if (!st.spawns?.length) return [];
+  const sorted = [...st.spawns].sort((a, b) => a.x - b.x);
+  const ends = sorted.length > 1 ? [sorted[0], sorted[sorted.length - 1]] : [sorted[0]];
+  return ends.map((p) => ({ x: p.x, y: p.y, cd: 0 }));
+}
+
+// An ammo chest beside you (ready or not), or null.
+const ammoChestBy = (world, f) => world.ammoChests.find((c) => Math.abs(c.x - f.x) <= AMMO_CHEST.reach && Math.abs(c.y - f.y) < 4) ?? null;
+
+// Use an ammo chest: your gun filled up (a pistol if you have none), then it's shut a while.
+function useAmmoChest(world, f, c) {
+  if (c.cd > 0) return;
+  if (!f.hasGun || !f.gun) giveGun(f, 'pistol');
+  else {
+    const g = GUNS[f.gun];
+    if (f.ammo === g.magazineSize && f.spareMags === g.magazines - 1) return; // (nothing to fill)
+    Object.assign(f, { ammo: g.magazineSize, spareMags: g.magazines - 1, reload: 0 });
+  }
+  f.active = 'gun';
+  c.cd = AMMO_CHEST.cooldown;
+  world.events.push({ type: 'ammo', id: f.id, x: c.x, y: c.y });
+}
+
+// Slime landing on a floor leaves a puddle of glue there and hops on (while it has hops left);
+// off a wall it bounces back, off a ceiling it drops.
+function slimeBounce(world, b, wall, px, py) {
+  if (b.vy > 0 && py <= wall.y + 0.5) {
+    const x1 = clamp(b.x - SLIME.width / 2, wall.x, wall.x + wall.w);
+    const x2 = clamp(b.x + SLIME.width / 2, wall.x, wall.x + wall.w);
+    world.puddles.push({ x1, x2, y: wall.y, t: SLIME.time });
+    world.events.push({ type: 'splat', x: b.x, y: wall.y });
+    if (b.hops-- <= 0) return false;
+    Object.assign(b, { y: wall.y - 1, vy: -260, vx: b.vx * 0.7 });
+    return true;
+  }
+  if (px <= wall.x || px >= wall.x + wall.w) Object.assign(b, { x: px, vx: -b.vx * 0.5 });
+  else Object.assign(b, { y: py, vy: Math.abs(b.vy) * 0.3 });
+  return true;
+}
+
+// Standing in slime?
+const inSlime = (world, f) => world.puddles.some((p) => Math.abs(p.y - f.y) < 1 && f.x >= p.x1 && f.x <= p.x2);
+
+// About one spore in `spore.every` leaves a small poison patch where it stops.
+function sporePatch(world, b) {
+  const c = b.spore;
+  if (world.rng() * c.every >= 1) return;
+  world.clouds.push({ id: world.nextCloud++, kind: 'spore', x: b.x, y: b.y, r: c.radius, t: c.time, by: b.owner, perSecond: c.perSecond });
+  const patches = world.clouds.filter((k) => k.kind === 'spore');
+  if (patches.length > c.max) world.clouds.splice(world.clouds.indexOf(patches[0]), 1);
+}
+
+// An arrow in a wall: a short thin foothold sticking out of it, back toward the shooter.
+function addFoothold(world, x, y, dir) {
+  world.footholds.push({ x: Math.round(x), y: Math.round(y), dir, t: FOOTHOLD.time });
+  if (world.footholds.length > FOOTHOLD.max) world.footholds.shift();
+}
+
+// Footholds wear out; the ones still there join the blocks you can stand on (world.live).
+function updateFootholds(world, st) {
+  world.footholds = world.footholds.filter((h) => (h.t -= DT) > 0);
+  const base = st.movers ? world.live : st.blocks;
+  world.live = world.footholds.length ? [...base, ...world.footholds.map((h) => ({ x: h.dir > 0 ? h.x - FOOTHOLD.width : h.x, y: h.y, w: FOOTHOLD.width, h: 2, oneWay: true, look: 'arrow' }))] : base;
+}
+
+// A thrown weapon comes to rest on the floor below where it stopped, as a pickup. Over a pit with
+// no floor under it, it's lost.
+function dropWeapon(world, weapon, x, y) {
+  let floor = null;
+  for (const r of world.live ?? getStage(world.stage).blocks) {
+    if (x < r.x || x > r.x + r.w || r.y < y - 4) continue;
+    if (floor === null || r.y < floor) floor = r.y;
+  }
+  if (floor === null) return;
+  world.pickups.push({ id: world.nextPickup++, x: Math.round(x), y: floor, weapon });
+  world.events.push({ type: 'spawn', x, y: floor, weapon });
+  if (weapon === 'key') placeChest(world, x);
+}
+
+// A shot landing on a fighter. Thrown things hit like a melee blow. A light gun only adds damage;
+// a heavy one pushes and stuns. A headshot hurts more and always stuns.
+function shotHits(world, v, b, dx, dy) {
+  if (b.thrown) return thrownHits(world, v, b, dx, dy);
+  // (Fire staff flames set you burning.)
+  if (b.burn && v.invincible <= 0 && v.dodge <= 0) Object.assign(v, { burn: Math.max(v.burn, b.burn), burnBy: b.owner });
+  const head = b.y < headBottom(v);
+  if (head) world.events.push({ type: 'headshot', id: v.id, by: b.owner, x: v.x, y: v.y - bodyHeight(v) });
+  // (Style: your shot hit someone, so a melee hit right after is a combo; a headshot fills it too,
+  // now and then.)
+  const shooter = world.fighters[b.owner];
+  if (shooter && shooter !== v && v.invincible <= 0) {
+    shooter.gunHitT = STYLE.comboWindow;
+    if (head && shooter.styleHeadCd <= 0) {
+      addStyle(world, shooter, STYLE.headshot);
+      shooter.styleHeadCd = STYLE.headshotCooldown;
+    }
+  }
+  const damage = b.damage * (head ? HEADSHOT.damageMul : 1);
+  if (b.light && !head) return chip(world, v, damage, b.owner);
+  if (b.volley) {
+    // A shotgun pellet: only the hit that takes this shot past half its pellets pushes and stuns.
+    const n = (b.volley.hits[v.id] = (b.volley.hits[v.id] ?? 0) + 1);
+    if (n !== b.volley.need) return chip(world, v, damage, b.owner);
+  }
+  const kb = b.light ? HEADSHOT.knockback : b.kb;
+  const growth = b.light ? HEADSHOT.knockbackGrowth : b.growth;
+  hit(world, v, damage, dx, dy - 0.2, kb, growth, b.owner);
+}
+
+// A thrown weapon landing on someone hits like a melee blow, with the weapon's own on-hit effects
+// where they make sense: the fish's slap, the knife's backstab, the keyboard's word (a smash).
+function thrownHits(world, v, b, dx, dy) {
+  const m = b.kind ? MELEE[b.kind] : null;
+  const behind = v.facing === Math.sign(b.vx);
+  const back = m?.backstab && behind ? m.backstab : null;
+  if (back) world.events.push({ type: 'backstab', id: v.id, x: v.x, y: v.y - bodyHeight(v) });
+  if (m?.smash) world.events.push({ type: 'word', id: b.owner, x: v.x, y: v.y - bodyHeight(v), text: keyboardSmash(world, m), scale: 0.25 });
+  const landed = hit(world, v, b.damage * (back ? back.damageMul : 1), dx, dy - 0.2, back ? back.knockback : b.kb, back ? back.knockbackGrowth : b.growth, b.owner);
+  if (landed && m?.slippery) v.slip = m.slippery;
+  if (landed && m?.bleed) Object.assign(v, { bleed: m.bleed.time, bleedRate: m.bleed.damage / m.bleed.time, bleedBy: b.owner });
+  return landed;
+}
+
+// A keyboard smash: 3 to 5 keys in a row off one row of the keyboard.
+function keyboardSmash(world, m) {
+  const row = m.smash[Math.floor(world.rng() * m.smash.length)];
+  const n = 3 + Math.floor(world.rng() * 3);
+  const at = Math.floor(world.rng() * (row.length - n + 1));
+  return row.slice(at, at + n);
+}
+
+// Damage with no push and no stun (light guns, burning, poison).
+function chip(world, v, amount, by, quiet = false) {
+  if (v.state !== 'ok' || v.invincible > 0 || (v.dodge > 0 && !quiet)) return;
+  v.damage = Math.min(999, v.damage + amount);
+  if (by >= 0 && by !== v.id) v.lastHitBy = by;
+  if (quiet) return;
+  v.flash = 0.08;
+  world.events.push({ type: 'hit', id: v.id, by, x: v.x, y: v.y - F.h / 2, power: 0, damage: amount });
+}
+
+// --- Melee ------------------------------------------------------------------------------------
+
+// A weapon's stats by key (null = fists); alt: its follow-up swing (the halberd's sweep).
+export const weaponOf = (key, alt = false) => (key ? (alt && MELEE[key].sweep) || MELEE[key] : STRIKE);
+
+function useMelee(world, f, input, press) {
+  f.comboT = Math.max(0, f.comboT - DT);
+  f.followT = Math.max(0, f.followT - DT);
+  f.throwCd = Math.max(0, f.throwCd - DT);
+  const held = input.meleeHeld || (!f.hasGun && !f.blade && input.shoot);
+  if (f.swing >= 0) {
+    const s = weaponOf(f.swingWeapon, f.swingAlt);
+    f.swing += DT;
+    // (The katana swings the moment you click; holding on through the swing winds up a throw.)
+    if (f.holding >= 0) f.holding = held ? f.holding + DT : -1;
+    // (Attacking again during a thrust that has a follow-up queues the follow-up.)
+    if (press.mp && s.followUp && f.swingWeapon === f.melee) f.followQueued = true;
+    if (f.swing >= s.startup && f.swing < s.startup + s.active) meleeHits(world, f, s);
+    if (f.swing >= s.startup + s.active + s.recovery) {
+      f.swing = -1;
+      if (s.followUp) {
+        f.followT = s.followUp.window;
+        if (f.followQueued && f.hitstun <= 0) startSwing(world, f, MELEE[f.swingWeapon], f.swingWeapon, false, true);
+      }
+      f.followQueued = false;
+    }
+    return;
+  }
+  if (f.blocking || f.chain) {
+    f.holding = -1;
+    return;
+  }
+  const m = weaponOf(f.melee);
+  // (A weapon you keep when throwing, the cleaver, can't be thrown again until its cooldown is
+  // over: until then it just swings.)
+  const t = f.throwCd > 0 && throwOf(m)?.keep ? null : throwOf(m);
+  if (t || m.charge || m.spin || m.eat || m.power) {
+    // A tap swings (when you let go). Holding winds up a throw, or charges the nodachi's dash
+    // slash or a powered swing, spins the morning star, or takes a bite of the carrot; once a
+    // throw or a dash is ready, letting go does it. You can hold it ready and aim. (The anvil
+    // only throws; the katana swings the moment you click, and the hold throws it after.)
+    if (press.mp) {
+      f.holding = 0;
+      f.active = 'melee';
+      f.spinHit = {};
+      if (m.instant) return startSwing(world, f, m, f.melee);
+    }
+    if (f.holding < 0) return;
+    if (held) {
+      f.holding += DT;
+      if (m.spin && f.holding >= m.spin.after) spinHits(world, f, m);
+      if (m.eat && f.holding >= m.eat.hold) bite(world, f, m);
+      return;
+    }
+    const heldFor = f.holding;
+    f.holding = -1;
+    if (m.spin && heldFor >= m.spin.after) return; // let go of the spin
+    if (t && (heldFor >= t.holdToThrow || m.throwOnly)) return throwMelee(world, f, m);
+    if (m.instant) return; // (already swung)
+    return startSwing(world, f, m, f.melee, !!m.charge && heldFor >= m.charge.time, false, powerOf(m, heldFor));
+  }
+  if (press.mp && m.followUp && f.followT > 0 && f.melee) return startSwing(world, f, m, f.melee, false, true);
+  if (press.mp) startSwing(world, f, m, f.melee);
+}
+
+// How charged a held swing is (0: a tap). A graded wind-up (the bat) grows with the hold, up to
+// 1; the others are either full (held long enough) or a tap.
+export function powerOf(m, heldFor) {
+  if (!m.power) return 0;
+  if (m.power.graded) return heldFor < 0.12 ? 0 : Math.min(1, heldFor / m.power.time);
+  return heldFor >= m.power.time ? 1 : 0;
+}
+
+// A swing's hitting stats once its charge is counted. Graded: from the tap's to the power's at
+// 90%, then the full ones (and a critical) at 100%.
+function chargedStats(m, power) {
+  if (!m.power || power <= 0) return m;
+  const p = m.power;
+  if (!p.graded) return { ...m, ...p };
+  if (power >= 1) return { ...m, ...p.full, critical: true };
+  const k = Math.min(1, power / 0.9);
+  const mix = (a, b) => a + (b - a) * k;
+  return { ...m, damage: mix(m.damage, p.damage), knockback: mix(m.knockback, p.knockback), knockbackGrowth: mix(m.knockbackGrowth, p.knockbackGrowth) };
+}
+
+// Where the morning star's ball is while it spins: round and round you, the way you face.
+export function spinBall(f, m, holding) {
+  const o = aimOrigin(f);
+  const a = (holding - m.spin.after) * m.spin.speed * (f.facing || 1) - Math.PI / 2;
+  return { x: o.x + Math.cos(a) * m.spin.radius, y: o.y + Math.sin(a) * m.spin.radius, a };
+}
+
+// The spinning morning star knocks away anyone the ball touches (each one now and then).
+function spinHits(world, f, m) {
+  const c = m.spin;
+  const ball = spinBall(f, m, f.holding);
+  for (const id of Object.keys(f.spinHit)) f.spinHit[id] -= DT;
+  for (const v of world.fighters) {
+    if (v === f || v.state !== 'ok' || (f.spinHit[v.id] ?? 0) > 0 || !circleHitsRect(ball.x, ball.y, c.ball, bodyRect(v))) continue;
+    f.spinHit[v.id] = c.every;
+    const dx = Math.sign(v.x - f.x) || f.facing;
+    if (v.blocking && Math.sign(f.x - v.x) === v.facing) {
+      world.events.push({ type: 'block', id: v.id, x: v.x, y: v.y - bodyHeight(v) / 2 });
+      continue;
+    }
+    world.events.push({ type: 'strike', x: ball.x, y: ball.y, sound: m.hitSound });
+    hit(world, v, c.damage, dx, -0.5, c.knockback, c.knockbackGrowth, f.id);
+  }
+}
+
+// A bite of the carrot: you run faster for a while. The last bite finishes it.
+function bite(world, f, m) {
+  f.holding = -1;
+  f.uses++;
+  f.haste = m.eat.time;
+  world.events.push({ type: 'bite', id: f.id, x: f.x, y: f.y - 24, weapon: f.melee });
+  if (f.uses >= m.eat.bites) f.melee = null;
+}
+
+// How a melee weapon is thrown (null: it isn't): its own throw, or, for light weapons in the
+// melee slot, the light throw (not the ones whose hold does something else).
+export const throwOf = (m) => m.throw ?? (m.weight === 'light' && !m.replacesGun && !m.charge && !m.noThrow && m !== STRIKE ? LIGHT_THROW : null);
+
+// key: which weapon swings (null = fists), so the swing keeps its stats and looks to the end.
+// charged: the nodachi's dash slash (it dashes forward, and the slash launches). alt: the weapon's
+// follow-up swing (the halberd's sweep).
+function startSwing(world, f, m, key, charged = false, alt = false, power = 0) {
+  if (alt) m = m.sweep;
+  f.swing = 0;
+  f.swingPower = power;
+  f.swingWeapon = key;
+  f.swingCharged = charged;
+  f.swingAlt = alt;
+  f.followT = 0;
+  f.active = key && MELEE[key].replacesGun ? 'gun' : 'melee';
+  // Attacking on the run costs stamina (more for heavy weapons); without enough, you stop to
+  // attack, as from standing.
+  const cost = STAMINA.swing[m === STRIKE ? 'fists' : m.weight];
+  f.swingRunning = f.grounded && Math.abs(f.vx) > 40 && f.stamina >= cost && !charged;
+  if (f.swingRunning) f.stamina -= cost;
+  f.swingStance = f.crouching ? 'crouch' : 'stand';
+  // A crouching attack goes out low and straight.
+  f.swingX = f.swingStance === 'crouch' ? Math.sign(f.aimX) || f.facing : f.aimX;
+  f.swingY = f.swingStance === 'crouch' ? 0 : f.aimY;
+  f.swingHit = [];
+  f.reload = 0;
+  if (charged) f.vx = (Math.sign(f.swingX) || f.facing) * m.charge.dash;
+  else if (f.grounded && !f.swingRunning) f.vx += Math.sign(f.swingX) * m.lunge;
+  if (m.paint && f.grounded && f.uses < m.paint.ammo) {
+    f.uses++;
+    rollPaint(world, f, m.paint);
+  }
+  world.events.push({ type: charged ? 'dash' : 'swing', id: f.id, x: f.x, y: f.y, weapon: key });
+}
+
+// The paint roller: paint along the floor in front of you, only as far as that floor goes.
+function rollPaint(world, f, c) {
+  const dir = Math.sign(f.swingX) || f.facing;
+  const floor = (world.live ?? getStage(world.stage).blocks).find((r) => Math.abs(r.y - f.y) < 1 && f.x >= r.x && f.x <= r.x + r.w);
+  if (!floor) return;
+  const a = clamp(f.x - dir * 6, floor.x, floor.x + floor.w);
+  const b = clamp(f.x + dir * c.length, floor.x, floor.x + floor.w);
+  world.paints.push({ x1: Math.min(a, b), x2: Math.max(a, b), y: floor.y, owner: f.id, t: c.time });
+}
+
+// The angle of the weapon during a swing (radians, 0 = right, y down). It waits at the start of the
+// arc during the wind-up, sweeps across during the active part, and stays at the end after.
+// The arc goes from above to below, in front of the attacker (from below to above if `rising`).
+export function swingAngle(swingX, swingY, t, m) {
+  const base = Math.atan2(swingY, swingX);
+  const arc = ((m.arc ?? 0) * Math.PI) / 180;
+  const p = Math.max(0, Math.min(1, (t - m.startup) / m.active));
+  const side = (swingX >= 0 ? 1 : -1) * (m.rising ? -1 : 1);
+  return base + side * arc * (2 * p - 1);
+}
+
+// Where the hit area is: at `reach` along the swing's angle. A thrust travels instead: jabbed out to
+// its full reach (the tip) and pulled back in while it's hitting, so it catches people up close too.
+export function swingPoint(f, m = weaponOf(f.swingWeapon)) {
+  const o = aimOrigin(f);
+  const a = swingAngle(f.swingX, f.swingY, f.swing, m);
+  const reach = m.thrust ? thrustReach(m, f.swing) : m.reach;
+  return { x: o.x + Math.cos(a) * reach, y: o.y + Math.sin(a) * reach };
+}
+
+// The whole hit area of a swing: circles along the blade, from near the hand out to the tip (just
+// the one point for fists and thrusts).
+export function swingPoints(f, m = weaponOf(f.swingWeapon)) {
+  if (!m.length) return [swingPoint(f, m)];
+  const o = aimOrigin(f);
+  const a = swingAngle(f.swingX, f.swingY, f.swing, m);
+  return [SWING_HAND + m.length * 0.3, SWING_HAND + m.length * 0.55, SWING_HAND + m.length * 0.8, m.reach].map((d) => ({ x: o.x + Math.cos(a) * d, y: o.y + Math.sin(a) * d }));
+}
+
+export const thrustReach = (m, t) => m.reach * (1 - 0.6 * Math.max(0, Math.min(1, (t - m.startup) / m.active)));
+
+// A melee weapon thrown in an arc. Light ones land and lie there as a pickup to go get back; La
+// Chola is gone for good.
+function throwMelee(world, f, m) {
+  const t = throwOf(m);
+  const o = aimOrigin(f);
+  const recover = t.recover !== false;
+  // (The crystal ball: thrown weapons home in too, for less damage.)
+  const homing = f.homing > 0;
+  const damage = t.damage * (homing ? ITEMS.crystal.homing.damage : 1);
+  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.melee, x: o.x, y: o.y, vx: f.aimX * t.speed, vy: f.aimY * t.speed - t.lift, gravity: t.gravity, life: recover ? 3 : 2, thrown: true, recover, damage, kb: t.knockback, growth: t.knockbackGrowth, homing });
+  // (The cleaver: you throw a spare and keep yours, and wait for the next throw.)
+  if (t.keep) f.throwCd = t.cooldown;
+  else f.melee = null;
+  f.holding = -1;
+  world.events.push({ type: 'throw', id: f.id, x: f.x, y: f.y - 20 });
+}
+
+// The trident thrown on its chain, in an arc.
+function throwTrident(world, f, m) {
+  const c = m.chain;
+  const o = aimOrigin(f);
+  f.chain = { phase: 'out', x: o.x, y: o.y, vx: f.aimX * c.speed, vy: f.aimY * c.speed - c.lift, victim: -1, stuck: 0 };
+  f.bladeHold = -1;
+  world.events.push({ type: 'throw', id: f.id, x: f.x, y: f.y - 20 });
+}
+
+// Tridents out on their chains. Flying out: a fighter it touches is hit (no push) and stunned,
+// and the chain reels them in to melee range; a wall, the floor, or the end of the chain stops
+// it and it's reeled back. It's back in your hand when it reaches you, or when your catch does.
+// Getting hit yourself lets the catch go.
+function updateChains(world, st) {
+  for (const f of world.fighters) {
+    const t = f.chain;
+    if (!t) continue;
+    const c = MELEE.trident.chain;
+    const o = aimOrigin(f);
+    if (f.state !== 'ok') {
+      f.chain = null;
+      continue;
+    }
+    if (t.phase === 'out') {
+      t.vy += c.gravity * DT;
+      const nx = t.x + t.vx * DT;
+      const ny = t.y + t.vy * DT;
+      let best = null;
+      let bestT = Infinity;
+      for (const r of solids(world, st)) {
+        const k = segmentHitsRect(t.x, t.y, nx, ny, r);
+        if (k !== null && k < bestT) [best, bestT] = [r, k];
+      }
+      for (const v of world.fighters) {
+        if (v === f || v.state !== 'ok' || v.hidden >= 0) continue;
+        const k = segmentHitsRect(t.x, t.y, nx, ny, bodyRect(v));
+        if (k !== null && k < bestT) [best, bestT] = [{ fighter: v }, k];
+      }
+      if (best) {
+        t.x += (nx - t.x) * bestT;
+        t.y += (ny - t.y) * bestT;
+        if (best.fighter) {
+          const v = best.fighter;
+          hit(world, v, c.damage, 0, 0, 0, 0, f.id);
+          v.stunned = true;
+          Object.assign(t, { phase: 'pull', victim: v.id });
+          world.events.push({ type: 'hooked', id: v.id, by: f.id, x: t.x, y: t.y });
+        } else {
+          t.phase = 'back';
+          world.events.push({ type: 'spark', x: t.x, y: t.y, dx: -Math.sign(t.vx), dy: -0.5 });
+        }
+      } else {
+        t.x = nx;
+        t.y = ny;
+        if (Math.hypot(t.x - o.x, t.y - o.y) >= c.length) t.phase = 'back';
+      }
+    } else if (t.phase === 'back') {
+      const dx = o.x - t.x;
+      const dy = o.y - t.y;
+      const d = Math.hypot(dx, dy);
+      if (d <= c.reelSpeed * DT) f.chain = null;
+      else Object.assign(t, { x: t.x + (dx / d) * c.reelSpeed * DT, y: t.y + (dy / d) * c.reelSpeed * DT });
+    } else {
+      const v = world.fighters[t.victim];
+      if (v.state !== 'ok' || v.hidden >= 0 || f.hitstun > 0) {
+        t.phase = 'back';
+        if (v.state === 'ok') v.stunned = false;
+        continue;
+      }
+      const dx = f.x - v.x;
+      const dy = o.y - center(v).y;
+      const d = Math.hypot(dx, dy);
+      if (Math.abs(dx) <= c.meleeRange && Math.abs(dy) < F.h) {
+        // Reeled in: still stunned for a moment, right in front of you.
+        Object.assign(v, { vx: 0, vy: Math.min(v.vy, 0), hitstun: Math.max(v.hitstun, c.stun), stunned: true });
+        f.chain = null;
+        continue;
+      }
+      // Dragged toward you; if a wall holds them for a while, the catch slips.
+      const before = d;
+      v.vx = (dx / d) * c.pullSpeed;
+      v.vy = (dy / d) * c.pullSpeed;
+      v.hitstun = Math.max(v.hitstun, 0.1);
+      v.stunned = true;
+      t.x = v.x;
+      t.y = center(v).y;
+      t.stuck = t.last !== undefined && before > t.last - 1 ? t.stuck + DT : 0;
+      t.last = before;
+      if (t.stuck > 0.4) {
+        t.phase = 'back';
+        v.stunned = false;
+      }
+    }
+  }
+}
+
+// Keyboard: roll a word. Its tier sets the share of damage and push this hit does.
+export function rollWord(world, m) {
+  let r = world.rng();
+  for (const tier of m.words) {
+    if (r < tier.chance) return { scale: tier.scale, freeze: !!tier.freeze, text: tier.pool[Math.floor(world.rng() * tier.pool.length)] };
+    r -= tier.chance;
+  }
+  const last = m.words[m.words.length - 1];
+  return { scale: last.scale, freeze: !!last.freeze, text: last.pool[0] };
+}
+
+// Katana: bullets touching the blade mid-swing fly off toward the pointer, as yours, hitting harder.
+function deflectBullets(world, f, m, area) {
+  const d = m.deflect;
+  for (const b of world.bullets) {
+    if (b.owner === f.id || !area.some((c) => Math.hypot(b.x - c.x, b.y - c.y) <= m.radius + 4)) continue;
+    const speed = Math.hypot(b.vx, b.vy) * d.speedMul;
+    b.vx = f.aimX * speed;
+    b.vy = f.aimY * speed;
+    b.owner = f.id;
+    b.damage *= d.damageMul;
+    b.kb *= d.knockbackMul;
+    b.life = Math.max(b.life, 0.6);
+    b.deflected = true;
+    world.events.push({ type: 'deflect', id: f.id, x: b.x, y: b.y });
+  }
+}
+
+function meleeHits(world, f, m) {
+  const area = swingPoints(f, m);
+  const touches = (rect) => area.some((c) => circleHitsRect(c.x, c.y, m.radius, rect));
+  if (m.deflect) deflectBullets(world, f, m, area);
+  const maxPower = m.weight === 'light' ? LIGHT_MAX_PUSH : Infinity;
+  // Mostly in the swing direction, lifted a little so hits pop people up.
+  const len = Math.hypot(f.swingX, f.swingY - 0.35) || 1;
+  const kx = f.swingX / len;
+  const ky = (f.swingY - 0.35) / len;
+  for (const v of world.fighters) {
+    if (v === f || v.state !== 'ok' || f.swingHit.includes('f' + v.id)) continue;
+    if (!touches(bodyRect(v))) continue;
+    f.swingHit.push('f' + v.id);
+    // Blocks and parries only work against hits from the side you're facing: judged by the way the
+    // attack travels (someone who lunged past your middle still swung at your face), or, for a
+    // swing straight up or down, by where the attacker stands.
+    const dir = Math.abs(f.swingX) > 0.2 ? Math.sign(f.swingX) : Math.sign(v.x - f.x);
+    const front = dir === 0 || dir === -v.facing;
+    if (v.blocking && front && !m.unblockable) {
+      // Blocked: no damage, both slide apart a little.
+      const away = Math.sign(v.x - f.x) || f.facing;
+      v.vx += away * BLOCK.blockPush;
+      f.vx -= away * BLOCK.blockPush;
+      world.events.push({ type: 'block', id: v.id, x: v.x, y: v.y - bodyHeight(v) / 2 });
+      continue;
+    }
+    if (front && v.blockDrop >= 0 && v.blockDrop < BLOCK.dropFrames / BLOCK.dropFps / 2 && v.dropStance === f.swingStance) {
+      // Parry: let go of block just as a matching hit lands. The attacker is stunned.
+      f.hitstun = BLOCK.parryStun;
+      f.stunned = true;
+      f.swing = -1;
+      f.vx = 0;
+      v.blockDrop = -1;
+      world.events.push({ type: 'parry', id: v.id, by: f.id, x: (v.x + f.x) / 2, y: v.y - bodyHeight(v) / 2 });
+      addStyle(world, v, STYLE.parry);
+      return;
+    }
+    // (A held swing hits with its charged stats.)
+    const c = chargedStats(m, f.swingPower ?? 0);
+    world.events.push({ type: c.critical ? 'critical' : 'strike', x: v.x, y: v.y - bodyHeight(v) / 2, sound: c.hitSound ?? 'blunt' });
+    if (m.words) {
+      // Keyboard: the word sets the share of damage and of the full launch. Every word launches.
+      const word = rollWord(world, m);
+      const s = word.scale;
+      world.events.push({ type: 'word', id: f.id, x: v.x, y: v.y - bodyHeight(v), text: word.text, scale: s });
+      if (word.freeze) {
+        // 100%: damage now, no push; frozen exactly as long as the phrase takes to type out,
+        // then the full launch (see updateFighter).
+        hit(world, v, m.damage, kx, ky, 0, 0, f.id);
+        const stun = word.text.length / m.bigTypeSpeed;
+        v.pendingLaunch = { left: stun, dx: kx, dy: ky - 0.4, base: m.launch.knockback, growth: m.launch.knockbackGrowth, by: f.id };
+        v.stunned = true;
+      } else {
+        hit(world, v, m.damage * s, kx, ky - 0.4 * s, m.launch.knockback * s, m.launch.knockbackGrowth * s, f.id);
+      }
+      continue;
+    }
+    // Quirks: from behind (backstab), straight up (uppercut), flat (homerun).
+    // (From behind: the swing travels the way they face, like the front check above.)
+    const behind = dir !== 0 && dir === v.facing;
+    const damage = c.damage * (m.backstab && behind ? m.backstab.damageMul : 1);
+    let [dx, dy] = [kx, ky];
+    if (m.uppercut) [dx, dy] = [Math.sign(f.swingX) * 0.15, -1];
+    else if (c.critical) [dx, dy] = [Math.sign(f.swingX) || f.facing, -1]; // 45°
+    else if (m.homerun) [dx, dy] = [Math.sign(f.swingX) || f.facing, -0.25];
+    // Light weapons' finishers launch: the nodachi's charged slash, the machete's last combo hit.
+    let launch = f.swingCharged && m.charge ? m.charge.launch : m.backstab && behind ? m.backstab : null;
+    if (m.combo && !f.swingHit.includes('combo')) {
+      f.swingHit.push('combo');
+      f.comboN = f.comboT > 0 ? f.comboN + 1 : 1;
+      f.comboT = m.combo.window;
+      if (f.comboN >= m.combo.hits) {
+        launch = m.combo.launch;
+        f.comboN = 0;
+        world.events.push({ type: 'combo', id: f.id, x: v.x, y: v.y - bodyHeight(v) });
+      }
+    }
+    const landed = launch ? hit(world, v, damage, dx, dy - 0.3, launch.knockback, launch.knockbackGrowth, f.id) : hit(world, v, damage, dx, dy, c.knockback, c.knockbackGrowth, f.id, maxPower);
+    if (landed && m.bleed) Object.assign(v, { bleed: m.bleed.time, bleedRate: m.bleed.damage / m.bleed.time, bleedBy: f.id });
+    if (landed) hitQuirks(world, f, v, c);
+    if (landed) addStyle(world, f, f.gunHitT > 0 ? STYLE.gunToMelee : STYLE.melee);
+    if (m.backstab && behind) world.events.push({ type: 'backstab', id: v.id, x: v.x, y: v.y - bodyHeight(v) });
+  }
+  world.barrels.forEach((b, i) => {
+    if (b.gone || f.swingHit.includes('b' + i) || !touches(barrelRect(b))) return;
+    f.swingHit.push('b' + i);
+    damageBarrel(b, m.damage, f.id);
+  });
+}
+
+// What a landed melee hit does besides damage and push: the pan's bonk (stunned longer), a bite
+// of the ham (heals you), the fish's slap (their floor turns to ice), the pliers' yoink.
+function hitQuirks(world, f, v, m) {
+  if (m.bonk) Object.assign(v, { hitstun: Math.min(F.maxHitstun, v.hitstun + m.bonk), stunned: true });
+  if (m.slippery) v.slip = m.slippery;
+  if (m.yoink) yoink(world, f, v);
+  if (m.radiation && !f.swingHit.includes('rad')) {
+    f.swingHit.push('rad');
+    irradiate(world, center(v), m.radiation, f.id);
+  }
+  if (m.bites && f.melee === f.swingWeapon) {
+    f.uses++;
+    f.damage = Math.max(0, f.damage - m.bites.heal);
+    world.events.push({ type: 'bite', id: f.id, x: f.x, y: f.y - 24, weapon: f.melee, heal: m.bites.heal });
+    if (f.uses >= m.bites.count) f.melee = null;
+  }
+}
+
+// THE WARNING: everyone near where it landed (the swinger too) gets a random effect, good or bad.
+function irradiate(world, at, c, by) {
+  world.events.push({ type: 'radiation', x: at.x, y: at.y, r: c.radius });
+  for (const f of world.fighters) {
+    if (f.state !== 'ok' || Math.hypot(center(f).x - at.x, center(f).y - at.y) > c.radius) continue;
+    const effect = RADIATION[Math.floor(world.rng() * RADIATION.length)];
+    if (ITEMS[effect]?.rune) Object.assign(f, { rune: effect, runeT: c.time, reflects: 0 });
+    else if (effect === 'jinx') f.jinx = c.time;
+    else if (effect === 'slip') f.slip = c.time;
+    else if (effect === 'burn') Object.assign(f, { burn: c.time, burnBy: by });
+    else if (effect === 'homing') f.homing = c.time;
+    world.events.push({ type: 'irradiated', id: f.id, x: f.x, y: f.y - F.h - 4, effect });
+  }
+}
+
+// The pliers: take the victim's weapon (the one in their hand first) and drop it behind you.
+function yoink(world, f, v) {
+  const gunSlot = v.blade && !v.chain ? 'blade' : v.hasGun ? 'gun' : null;
+  const slot = v.active === 'melee' && v.melee ? 'melee' : gunSlot ?? (v.melee ? 'melee' : null);
+  if (!slot) return;
+  let weapon;
+  if (slot === 'melee') {
+    weapon = v.melee;
+    Object.assign(v, { melee: null, holding: -1 });
+  } else if (slot === 'blade') {
+    weapon = v.blade;
+    Object.assign(v, { blade: null, bladeHold: -1 });
+  } else {
+    weapon = v.gun;
+    Object.assign(v, { gun: null, hasGun: false, reload: 0 });
+  }
+  dropWeapon(world, weapon, f.x - f.facing * 20, f.y - 8);
+  world.events.push({ type: 'yoink', id: f.id, by: v.id, x: v.x, y: v.y - 20, weapon });
+}
+
+// --- Pickups ----------------------------------------------------------------------------------
+
+// Every so often a melee weapon appears at a free pickup spot inside the storm wall. Pickups the
+// wall closes over are destroyed, so they don't use up a slot.
+function updatePickups(world, st) {
+  if (world.training) return;
+  const s = world.storm;
+  const inside = (x) => x > s.wallLeft + 8 && x < s.wallRight - 8;
+  world.pickups = world.pickups.filter((p) => {
+    if (inside(p.x)) return true;
+    world.events.push({ type: 'destroyed', x: p.x, y: p.y });
+    return false;
+  });
+  // Weapon shrines: a weapon always comes back to the altar a while after it's taken.
+  const shrine = st.pickupSpots.find((sp) => sp.shrine && inside(sp.x) && !world.pickups.some((p) => p.x === sp.x && p.y === sp.y));
+  if (shrine && (world.shrineTimer -= DT) <= 0) {
+    world.shrineTimer = PICKUPS.shrineEvery;
+    spawnPickup(world, shrine);
+  }
+  world.pickupTimer -= DT;
+  if (world.pickupTimer > 0) return;
+  world.pickupTimer = PICKUPS.every;
+  if (world.pickups.length >= PICKUPS.max) return;
+  const free = st.pickupSpots.filter((sp) => !sp.shrine && inside(sp.x) && !world.pickups.some((p) => p.x === sp.x && p.y === sp.y));
+  if (!free.length) return;
+  spawnPickup(world, free[Math.floor(world.rng() * free.length)]);
+}
+
+// Training: a weapon (gun, melee weapon or grenade) dropped in front of a fighter, as a pickup.
+export function spawnWeapon(world, id, weapon) {
+  const f = world.fighters[id];
+  if (!f || f.state !== 'ok') return;
+  dropWeapon(world, weapon, f.x + f.facing * 12, f.y - 8);
+}
+
+// What can turn up as a pickup: melee weapons, guns (not the starting pistol) and grenades.
+const PICKUP_KINDS = {
+  melee: Object.keys(MELEE),
+  gun: Object.keys(GUNS).filter((k) => k !== 'pistol'),
+  grenade: Object.keys(GRENADES),
+  item: Object.keys(ITEMS),
+};
+
+function spawnPickup(world, spot, weapon = null) {
+  if (!weapon) {
+    // (Weapons switched off in this match's rules never turn up.)
+    const on = world.rules;
+    const mix = { melee: on.melee ? PICKUPS.mix.melee : 0, gun: on.ranged ? PICKUPS.mix.gun : 0, grenade: on.thrown ? PICKUPS.mix.grenade : 0, item: on.items ? PICKUPS.mix.item : 0 };
+    if (!(mix.melee + mix.gun + mix.grenade + mix.item)) return;
+    let r = world.rng() * (mix.melee + mix.gun + mix.grenade + mix.item);
+    const group = (r -= mix.melee) < 0 ? 'melee' : (r -= mix.gun) < 0 ? 'gun' : (r -= mix.grenade) < 0 ? 'grenade' : 'item';
+    const kinds = PICKUP_KINDS[group];
+    weapon = kinds[Math.floor(world.rng() * kinds.length)];
+  }
+  world.pickups.push({ id: world.nextPickup++, x: spot.x, y: spot.y, weapon });
+  world.events.push({ type: 'spawn', x: spot.x, y: spot.y, weapon });
+  if (weapon === 'key') placeChest(world, spot.x);
+}
+
+// Grab the nearest pickup you're touching: it replaces what you hold of its kind. A gun takes the
+// gun slot (fully loaded); a grenade goes in your pocket, or, with both slots full, replaces the
+// next one you'd throw. With nothing in reach, the button swaps your two grenades around.
+function pickUp(world, f) {
+  let i = -1;
+  world.pickups.forEach((p, k) => {
+    if (Math.abs(p.x - f.x) > PICKUPS.reach || Math.abs(p.y - f.y) > 24) return;
+    if (i < 0 || Math.abs(p.x - f.x) < Math.abs(world.pickups[i].x - f.x)) i = k;
+  });
+  if (i < 0) {
+    const chest = ammoChestBy(world, f);
+    if (chest && chest.cd <= 0) return useAmmoChest(world, f, chest);
+    if (f.grenades.length === 2) {
+      f.grenades.reverse();
+      world.events.push({ type: 'swap', id: f.id, x: f.x, y: f.y - F.h });
+    }
+    return;
+  }
+  if (ITEMS[world.pickups[i].weapon]?.carry && f.carry) return; // (one thing held up at a time)
+  const [p] = world.pickups.splice(i, 1);
+  if (ITEMS[p.weapon]) {
+    useItem(world, f, p.weapon);
+  } else if (GUNS[p.weapon]) {
+    giveGun(f, p.weapon);
+    f.active = 'gun';
+  } else if (GRENADES[p.weapon]) {
+    if (f.grenades.length >= GRENADE.max) f.grenades[0] = p.weapon;
+    else f.grenades.push(p.weapon);
+  } else if (MELEE[p.weapon].replacesGun) {
+    // Goes in the gun slot: the gun is dropped; fists or the melee weapon stay.
+    f.hasGun = false;
+    f.gun = null;
+    f.reload = 0;
+    f.blade = p.weapon;
+    f.active = 'gun';
+  } else {
+    Object.assign(f, { melee: p.weapon, holding: -1, uses: 0, followT: 0, active: 'melee' });
+  }
+  world.events.push({ type: 'pickup', id: f.id, x: p.x, y: p.y, weapon: p.weapon });
+}
+
+// --- Items ------------------------------------------------------------------------------------
+
+// An item picked up: eaten (heals), held up (the key), a rune's boon, the genie lamp (rubbed for a
+// while, then a wish), the crystal ball's homing shots.
+function useItem(world, f, key) {
+  const it = ITEMS[key];
+  if (it.heal) {
+    f.damage = Math.max(0, f.damage - it.heal);
+    world.events.push({ type: 'heal', id: f.id, x: f.x, y: f.y - 20, heal: it.heal });
+  } else if (it.carry) {
+    Object.assign(f, { carry: key, carryT: 0 });
+    if (key === 'key') placeChest(world, f.x);
+  } else if (it.rune) {
+    Object.assign(f, { rune: key, runeT: it.rune.time, reflects: it.rune.reflect ?? 0 });
+  } else if (it.wish) {
+    f.wish = it.wish.rub;
+  } else if (it.homing) {
+    f.homing = it.homing.time;
+  }
+  world.events.push({ type: 'item', id: f.id, x: f.x, y: f.y - 24, item: key });
+}
+
+// Drop what you hold up, where you are (lost over a pit).
+function dropCarry(world, f) {
+  const key = f.carry;
+  Object.assign(f, { carry: null, carryT: 0 });
+  dropWeapon(world, key, f.x, f.y - 10);
+  world.events.push({ type: 'drop', id: f.id, x: f.x, y: f.y - 30, item: key });
+}
+
+// The locked chest goes on the floor farthest from where the key turned up (once, until opened).
+function placeChest(world, keyX) {
+  if (world.chest) return;
+  const st = getStage(world.stage);
+  let best = null;
+  for (const p of [...st.spawns, ...st.pickupSpots]) if (!best || Math.abs(p.x - keyX) > Math.abs(best.x - keyX)) best = p;
+  if (best) world.chest = { x: best.x, y: best.y };
+}
+
+// How much of a push this fighter takes: the iron rune shrugs it off, a jinx and the crown's weight
+// make it worse.
+function pushTaken(world, v) {
+  let k = 1;
+  if (v.rune) k *= ITEMS[v.rune].rune.push ?? 1;
+  if (v.jinx > 0) k *= WISH.jinx.push;
+  if (world.crownRule === 'weight' && world.crown === v.id) k *= CROWN.weight;
+  return k;
+}
+
+export { setHealthRule };
+
+// Is this spot inside the banner's melee-only zone?
+const inHaven = (world, x) => !!world.haven && x >= world.haven.left && x <= world.haven.right;
+
+// The banner planted where it landed: its stretch of the stage (the section it's in, on a random
+// stage) becomes the melee-only zone, in its thrower's colour. A new banner replaces the old one.
+function plantBanner(world, owner, x, y) {
+  const st = getStage(world.stage);
+  const sec = st.sections?.find((s) => x >= s.left && x < s.right);
+  const [left, right] = sec ? [sec.left, sec.right] : [x - HAVEN.width / 2, x + HAVEN.width / 2];
+  world.haven = { x: Math.round(x), y, left, right, owner, held: 0 };
+  world.events.push({ type: 'plant', id: owner, x, y: y - 20 });
+}
+
+// The banner: its thrower earns a life by spending long enough in the zone; away from it (or
+// knocked out) for more than HAVEN.away s, the zone fades out for good.
+function updateHaven(world) {
+  const h = world.haven;
+  if (!h) return;
+  const f = world.fighters[h.owner];
+  const inside = f.state === 'ok' && inHaven(world, f.x);
+  h.away = inside ? 0 : (h.away ?? 0) + DT;
+  if (f.state === 'out' || h.away > HAVEN.away) {
+    world.haven = null;
+    world.events.push({ type: 'unplant', id: h.owner, x: h.x, y: h.y - 20 });
+    return;
+  }
+  if (!inside || (h.held += DT) < GRENADES.banner.plant.hold) return;
+  if (!world.training) f.stocks++;
+  world.haven = null;
+  world.events.push({ type: 'banner', id: f.id, x: f.x, y: f.y - 30 });
+}
+
+// The crystal ball's shots turn toward the nearest enemy (up to `turn` rad/s).
+function homeIn(world, b) {
+  let target = null;
+  let best = Infinity;
+  for (const v of world.fighters) {
+    if (v.id === b.owner || v.state !== 'ok' || v.hidden >= 0) continue;
+    const d = Math.hypot(v.x - b.x, v.y - F.h / 2 - b.y);
+    if (d < best) [target, best] = [v, d];
+  }
+  if (!target) return;
+  const want = Math.atan2(target.y - F.h / 2 - b.y, target.x - b.x);
+  const now = Math.atan2(b.vy, b.vx);
+  const turn = Math.atan2(Math.sin(want - now), Math.cos(want - now));
+  const a = now + Math.max(-1, Math.min(1, turn / (ITEMS.crystal.homing.turn * DT))) * ITEMS.crystal.homing.turn * DT;
+  const speed = Math.hypot(b.vx, b.vy);
+  b.vx = Math.cos(a) * speed;
+  b.vy = Math.sin(a) * speed;
+}
+
+// Items over time: runes wear off, the lamp's wish comes, a jinx and the homing end, the key opens
+// the chest, the banner's planter earns a life; training dummies keep their set health.
+function updateItems(world, st) {
+  for (const f of world.fighters) {
+    if (f.state !== 'ok') continue;
+    if (f.rune && (f.runeT -= DT) <= 0) Object.assign(f, { rune: null, reflects: 0 });
+    f.jinx = Math.max(0, f.jinx - DT);
+    f.homing = Math.max(0, f.homing - DT);
+    if (f.wish >= 0 && (f.wish -= DT) < 0) grantWish(world, f);
+    if (f.carry === 'key' && world.chest && Math.abs(f.x - world.chest.x) <= CARRY.reach && Math.abs(f.y - world.chest.y) < 4) openChest(world, f);
+    holdHealth(f);
+    f.styleHeadCd = Math.max(0, f.styleHeadCd - DT);
+    f.styleEvadeCd = Math.max(0, f.styleEvadeCd - DT);
+    f.gunHitT = Math.max(0, f.gunHitT - DT);
+    if (f.style >= 1) styleReload(world, f);
+  }
+  updateHaven(world);
+}
+
+// The genie lamp: (rarely) doom, a legendary weapon at your feet, a full heal, or a jinx. Doom is
+// the keyboard's big phrase treatment: frozen, shaking, then launched off the stage.
+function grantWish(world, f) {
+  let r = world.rng();
+  let wish;
+  if ((r -= WISH.death) < 0) {
+    wish = 'doom';
+    f.pendingLaunch = { left: WISH.doom.freeze, dx: f.facing * 0.4, dy: -1, base: WISH.doom.knockback, growth: 0, by: -1 };
+    f.stunned = true;
+  } else if (r < WISH.legendary) {
+    wish = 'legendary';
+    dropWeapon(world, LEGENDARY[Math.floor(world.rng() * LEGENDARY.length)], f.x + f.facing * 12, f.y - 8);
+  } else if (r < WISH.legendary + WISH.heal) {
+    wish = 'heal';
+    f.damage = 0;
+  } else {
+    wish = 'jinx';
+    f.jinx = WISH.jinx.time;
+  }
+  world.events.push({ type: 'wish', id: f.id, x: f.x, y: f.y - 30, wish });
+}
+
+// The key in the chest: it opens and a legendary weapon comes out.
+function openChest(world, f) {
+  const at = world.chest;
+  world.chest = null;
+  Object.assign(f, { carry: null, carryT: 0 });
+  const weapon = LEGENDARY[Math.floor(world.rng() * LEGENDARY.length)];
+  world.pickups.push({ id: world.nextPickup++, x: at.x, y: at.y, weapon });
+  world.events.push({ type: 'chest', id: f.id, x: at.x, y: at.y, weapon });
+}
+
+// Training dummies' health rule: 'set' (never changes), 'banded' (takes hits, then goes back to
+// the set value a second after the last one).
+function holdHealth(f) {
+  const h = f.healthRule;
+  if (!h) return;
+  if (h.mode === 'set') f.damage = h.value;
+  else if (h.mode === 'banded') {
+    if (f.damage !== h.value && f.damage !== f.bandLast) f.bandT = 1;
+    f.bandLast = f.damage;
+    if (f.bandT > 0 && (f.bandT -= DT) <= 0) f.damage = h.value;
+  }
+}
+
+// Training: a dummy's health rule ({ mode: 'set' | 'banded' | 'reset', value }). Reset just puts
+// its damage back to the value once.
+function setHealthRule(world, id, rule) {
+  const f = world.fighters[id];
+  if (!f) return;
+  f.damage = rule.value;
+  f.healthRule = rule.mode === 'set' || rule.mode === 'banded' ? { mode: rule.mode, value: rule.value } : null;
+  Object.assign(f, { bandT: 0, bandLast: rule.value });
+}
+
+// --- Getting hit, KOs, respawn ----------------------------------------------------------------
+
+// maxPower caps the push (light weapons never launch).
+// unavoidable: stage hazards (spikes, crushers) that a dash doesn't dodge.
+function hit(world, v, amount, dx, dy, base, growth, by, maxPower = Infinity, unavoidable = false) {
+  if (v.state !== 'ok' || v.invincible > 0) return false;
+  if (v.dodge > 0 && !unavoidable) {
+    world.events.push({ type: 'evade', id: v.id, x: v.x, y: v.y - F.h / 2 });
+    if (v.styleEvadeCd <= 0) {
+      addStyle(world, v, STYLE.evade);
+      v.styleEvadeCd = STYLE.evadeEvery;
+    }
+    return false;
+  }
+  v.damage = Math.min(999, v.damage + amount);
+  // (The iron rune, a jinx and the crown's weight change how hard you're pushed.)
+  const power = Math.min(maxPower, (base + growth * v.damage) * pushTaken(world, v));
+  if (v.carry && power > CARRY.dropPush) dropCarry(world, v);
+  const len = Math.hypot(dx, dy) || 1;
+  v.vx = (dx / len) * power;
+  v.vy = (dy / len) * power;
+  if (v.grounded && v.vy > 0) v.vy = -v.vy * 0.5;
+  v.grounded = false;
+  v.hitstun = Math.min(F.maxHitstun, power * F.hitstunPerSpeed);
+  if (v.hitstun > 0.15) {
+    v.swing = -1;
+    v.reload = 0;
+  }
+  v.fastFall = false;
+  v.cutting = false;
+  v.crouching = false;
+  v.tucked = false;
+  v.hidden = -1; // a hit knocks you out of a doorway
+  v.blocking = null;
+  v.blockDrop = -1;
+  v.jumpsLeft = F.airJumps;
+  v.flash = 0.12;
+  if (by >= 0 && by !== v.id) v.lastHitBy = by;
+  world.events.push({ type: 'hit', id: v.id, by, x: v.x, y: v.y - F.h / 2, power, damage: amount });
+  return true;
+}
+
+function checkBlastZone(world, st, f) {
+  if (f.state !== 'ok') return;
+  const b = st.blast;
+  if (f.x > b.left && f.x < b.right && f.y < b.bottom && f.y > b.top) return;
+  knockOut(world, st, f);
+}
+
+function knockOut(world, st, f) {
+  f.pendingLaunch = null;
+  if (!world.training) f.stocks--;
+  const by = f.lastHitBy;
+  if (by >= 0 && by !== f.id) world.fighters[by].kos++;
+  if (f.carry) dropCarry(world, f);
+  // Bounty: knock out the champion and the crown is yours.
+  if (world.crownRule === 'bounty' && world.crown === f.id && by >= 0 && by !== f.id) {
+    world.crown = by;
+    const k = world.fighters[by];
+    k.damage = Math.max(0, k.damage - CROWN.bountyHeal);
+    world.events.push({ type: 'crown', id: by, x: k.x, y: k.y - F.h });
+  }
+  const cam = st.camera;
+  world.events.push({ type: 'ko', id: f.id, by, x: clamp(f.x, cam.left + 20, cam.right - 20), y: clamp(f.y - F.h / 2, cam.top + 20, cam.bottom - 20) });
+  f.state = f.stocks > 0 ? 'dead' : 'out';
+  f.respawn = F.respawnTime;
+  f.swing = -1;
+  f.chain = null;
+  f.hitstun = 0;
+  f.vx = 0;
+  f.vy = 0;
+}
+
+// Respawn at the spawn point closest to the middle of the safe area.
+export function respawnPoint(world, st = getStage(world.stage)) {
+  const target = (world.storm.left + world.storm.right) / 2;
+  let best = st.spawns[0];
+  for (const p of st.spawns) if (Math.abs(p.x - target) < Math.abs(best.x - target)) best = p;
+  return { x: best.x, y: best.y - 60 };
+}
+
+function respawn(world, st, f) {
+  const p = respawnPoint(world, st);
+  Object.assign(f, { state: 'ok', hidden: -1, pendingLaunch: null, x: p.x, y: p.y, vx: 0, vy: 0, damage: 0, invincible: F.respawnInvincible, lastHitBy: -1, jumpsLeft: F.airJumps, drop: 0, grounded: false, fastFall: false, cutting: false });
+  rearm(f);
+  Object.assign(f, { burn: 0, bleed: 0, slip: 0, haste: 0, rune: null, runeT: 0, reflects: 0, wish: -1, jinx: 0, homing: 0, carryT: 0 });
+}
+
+function checkGameOver(world) {
+  if (world.phase !== 'play' || world.fighters.length < 2 || world.training) return;
+  const alive = world.fighters.filter((f) => f.stocks > 0);
+  if (alive.length > 1) return;
+  world.phase = 'over';
+  world.timer = RULES.endDelay;
+  world.winner = alive.length ? alive[0].id : -1;
+  world.events.push({ type: 'game', winner: world.winner });
+}
+
+// --- Doorways ---------------------------------------------------------------------------------
+
+// Duck into a free doorway you're standing in (on the ground, not busy attacking or blocking).
+function hide(world, st, f) {
+  if (!f.grounded || f.swing >= 0 || f.blocking) return;
+  const i = st.doors.findIndex((d) => Math.abs(d.x - f.x) <= DOOR.reach && Math.abs(d.y - f.y) < 1);
+  if (i < 0 || world.fighters.some((o) => o !== f && o.state === 'ok' && o.hidden === i)) return;
+  Object.assign(f, { hidden: i, x: st.doors[i].x, vx: 0, vy: 0, crouching: false });
+  world.events.push({ type: 'hide', id: f.id, x: f.x, y: f.y });
+}
+
+// --- Barrels and spikes -----------------------------------------------------------------------
+
+function damageBarrel(b, amount, by) {
+  if (b.gone || b.fuse >= 0) return;
+  b.hp -= amount;
+  b.flash = 0.08;
+  if (by >= 0) b.lastBy = by;
+  if (b.hp <= 0) b.fuse = 0;
+}
+
+function updateBarrels(world) {
+  for (const b of world.barrels) {
+    b.flash = Math.max(0, b.flash - DT);
+    if (b.gone) {
+      b.respawn -= DT;
+      const blocked = world.fighters.some((f) => f.state === 'ok' && Math.abs(f.x - b.x) < 14 && Math.abs(f.y - b.y) < 30);
+      if (b.respawn <= 0 && !blocked) Object.assign(b, { gone: false, hp: BARREL.health, lastBy: -1 });
+      continue;
+    }
+    if (b.fuse >= 0) {
+      b.fuse -= DT;
+      if (b.fuse <= 0) explode(world, b);
+    }
+  }
+}
+
+function explode(world, b) {
+  b.gone = true;
+  b.fuse = -1;
+  b.respawn = BARREL.respawnTime;
+  blast(world, { x: b.x, y: b.y - 10 }, { radius: BARREL.blastRadius, damage: BARREL.blastDamage, knockback: BARREL.knockback, knockbackGrowth: BARREL.knockbackGrowth }, b.lastBy);
+}
+
+// An explosion: everyone in range is hurt and pushed away from the centre (less at the edge), and
+// barrels in range go off a moment later. extra(f) runs on each fighter caught (fire grenades).
+function blast(world, at, e, by, extra = null, look = 'explosion') {
+  for (const f of world.fighters) {
+    const c = center(f);
+    const dx = c.x - at.x;
+    const dy = c.y - at.y;
+    const d = Math.hypot(dx, dy);
+    if (f.state !== 'ok' || d >= e.radius) continue;
+    const strength = 1 - (BLAST.falloff * d) / e.radius;
+    const len = d || 1;
+    hit(world, f, e.damage * strength, dx / len, dy / len - BLAST.lift, e.knockback * strength, e.knockbackGrowth, by);
+    if (extra) extra(f);
+  }
+  for (const o of world.barrels) {
+    if (!o.gone && o.fuse < 0 && Math.hypot(o.x - at.x, o.y - 10 - at.y) < e.radius) {
+      o.fuse = BARREL.chainDelay;
+      o.lastBy = by;
+    }
+  }
+  world.events.push({ type: look, x: at.x, y: at.y, r: e.radius });
+}
+
+function updateSpikes(world, st) {
+  for (const key of Object.keys(world.spikeCooldown)) {
+    world.spikeCooldown[key] -= DT;
+    if (world.spikeCooldown[key] <= 0) delete world.spikeCooldown[key];
+  }
+  for (const s of st.spikes) {
+    const zone = spikeZone(s);
+    for (const f of world.fighters) {
+      if (f.state !== 'ok' || world.spikeCooldown[f.id] !== undefined) continue;
+      if (!overlaps(zone, bodyRect(f))) continue;
+      world.spikeCooldown[f.id] = SPIKES.cooldown;
+      // Walls push you away from the wall; floors pop you up, a little away from the middle.
+      const [dx, dy] = s.up ? [Math.sign(f.x - (s.x + (s.width * TILE) / 2)) * 0.3, -1] : [s.face, -0.6];
+      hit(world, f, SPIKES.damage, dx, dy, SPIKES.knockback, SPIKES.knockbackGrowth, -1, Infinity, true);
+      world.events.push({ type: 'spark', x: f.x, y: f.y - F.h / 2, dx, dy: s.up ? -1 : -0.5 });
+    }
+  }
+}
+
+// --- Grenades -----------------------------------------------------------------------------------
+
+// Press the grenade button to take out the next grenade and start cooking it; hold to aim; let go
+// to throw. Holding it past its fuse sets it off in your hand. Getting hit drops it at your feet.
+function useGrenade(world, f, input, press, control) {
+  if (f.cook < 0) {
+    // With your C4 stuck somewhere, the button sets it off.
+    const c4 = press.gp && world.grenades.filter((g) => g.owner === f.id && GRENADES[g.kind].remote);
+    if (c4?.length) {
+      for (const g of c4) g.fuse = 0;
+      return;
+    }
+    if (!press.gp || !f.grenades.length || f.blocking || f.swing >= 0 || f.chain) return;
+    f.cooking = world.infiniteAmmo ? f.grenades[0] : f.grenades.shift();
+    f.cook = 0;
+    return;
+  }
+  const g = GRENADES[f.cooking];
+  f.cook += DT;
+  const o = aimOrigin(f);
+  if (f.cook >= g.fuse) return letGo(world, f, o.x, o.y, 0, 0, 0);
+  if (!control) return letGo(world, f, f.x, f.y - 8, f.vx * 0.5, -60, g.fuse - f.cook);
+  if (input.grenadeHeld) return;
+  const t = GRENADE;
+  letGo(world, f, o.x, o.y, f.aimX * t.throwSpeed + f.vx * 0.3, f.aimY * t.throwSpeed - t.lift, g.fuse - f.cook);
+  world.events.push({ type: 'throw', id: f.id, x: f.x, y: f.y - 20 });
+}
+
+function letGo(world, f, x, y, vx, vy, fuse) {
+  // (on: the fighter a C4 is stuck to, or -1; stuck: stuck to a wall or floor.)
+  world.grenades.push({ id: world.nextGrenade++, owner: f.id, kind: f.cooking, x, y, vx, vy, fuse, on: -1, stuck: false });
+  f.cook = -1;
+  f.cooking = null;
+}
+
+// Grenades fly, bounce off walls and floors (landing on thin platforms from above), roll to a stop
+// and go off when the fuse runs out. A warp grenade touching someone swaps you with them.
+function updateGrenades(world, st) {
+  const walls = solids(world, st);
+  const thins = (world.live ?? st.blocks).filter((b) => b.oneWay);
+  const t = GRENADE;
+  const box = (g) => ({ x: g.x - t.size / 2, y: g.y - t.size / 2, w: t.size, h: t.size });
+  world.grenades = world.grenades.filter((g) => {
+    if (world.haven && inHaven(world, g.x) && !GRENADES[g.kind].plant) {
+      world.events.push({ type: 'fizzle', x: g.x, y: g.y });
+      return false;
+    }
+    const remote = GRENADES[g.kind].remote;
+    if (remote && (g.stuck || g.on >= 0)) {
+      // C4 stuck to a wall stays put; stuck to someone, it goes where they go (falling off if
+      // they're knocked out).
+      const v = world.fighters[g.on];
+      if (v && v.state === 'ok') Object.assign(g, { x: v.x + g.ox, y: v.y + g.oy });
+      else if (v) Object.assign(g, { on: -1, stuck: false });
+      if (g.fuse > 0) return true;
+      detonate(world, st, g);
+      return false;
+    }
+    g.fuse -= DT;
+    g.vy = Math.min(g.vy + t.gravity * DT, 600);
+    g.x += g.vx * DT;
+    if (walls.some((r) => overlaps(box(g), r))) {
+      g.x -= g.vx * DT;
+      g.vx = -g.vx * t.bounce;
+      if (remote) g.stuck = true;
+    }
+    const prevBottom = g.y + t.size / 2;
+    g.y += g.vy * DT;
+    const landed = thins.find((r) => g.vy > 0 && prevBottom <= r.y + 0.01 && g.y + t.size / 2 >= r.y && g.x > r.x && g.x < r.x + r.w);
+    const floor = landed || (g.vy > 0 && walls.find((r) => overlaps(box(g), r)));
+    if (floor && GRENADES[g.kind].plant) {
+      // The banner: planted where it first lands.
+      plantBanner(world, g.owner, g.x, floor.y);
+      return false;
+    }
+    if (walls.some((r) => overlaps(box(g), r)) || landed) {
+      if (landed) g.y = landed.y - t.size / 2;
+      else g.y -= g.vy * DT;
+      g.vy = Math.abs(g.vy) < 60 ? 0 : -g.vy * t.bounce;
+      g.vx *= t.friction;
+      if (remote) g.stuck = true;
+    }
+    if (remote) {
+      const v = !g.stuck && world.fighters.find((o) => o.id !== g.owner && o.state === 'ok' && o.hidden < 0 && overlaps(box(g), bodyRect(o)));
+      if (v) Object.assign(g, { on: v.id, ox: g.x - v.x, oy: g.y - v.y });
+      if (g.stuck || v) {
+        Object.assign(g, { vx: 0, vy: 0 });
+        world.events.push({ type: 'stick', x: g.x, y: g.y });
+      }
+      return true;
+    }
+    if (GRENADES[g.kind].warp) {
+      const owner = world.fighters[g.owner];
+      const v = world.fighters.find((o) => o.id !== g.owner && o.state === 'ok' && o.hidden < 0 && overlaps(box(g), bodyRect(o)));
+      if (v && owner.state === 'ok') {
+        const [ox, oy] = [owner.x, owner.y];
+        Object.assign(owner, { x: v.x, y: v.y, vx: 0, vy: 0 });
+        Object.assign(v, { x: ox, y: oy, vx: 0, vy: 0 });
+        world.events.push({ type: 'warp', id: owner.id, x: owner.x, y: owner.y - F.h / 2 }, { type: 'warp', id: v.id, x: v.x, y: v.y - F.h / 2 });
+        return false;
+      }
+    }
+    if (g.fuse > 0) return true;
+    detonate(world, st, g);
+    return false;
+  });
+}
+
+function detonate(world, st, g) {
+  const k = GRENADES[g.kind];
+  const at = { x: g.x, y: g.y };
+  if (k.explode) {
+    const burn = k.burn ? (f) => Object.assign(f, { burn: k.burn.time, burnBy: g.owner }) : null;
+    blast(world, at, k.explode, g.owner, burn, k.burn ? 'fireball' : k.cash ? 'moneyblast' : 'explosion');
+    if (k.cash) showerCash(world, at, k.cash);
+  } else if (k.hole) {
+    world.holes.push({ id: world.nextCloud++, x: at.x, y: at.y, r: k.hole.radius, t: k.hole.time, pull: k.hole.pull });
+    world.events.push({ type: 'hole', x: at.x, y: at.y });
+  } else if (k.cloud) {
+    world.clouds.push({ id: world.nextCloud++, kind: g.kind, x: at.x, y: at.y, r: k.cloud.radius, t: k.cloud.time, by: g.owner });
+    world.events.push({ type: 'cloud', kind: g.kind, x: at.x, y: at.y });
+  } else if (k.warp) {
+    const f = world.fighters[g.owner];
+    if (f.state !== 'ok' || f.hidden >= 0) return;
+    world.events.push({ type: 'warp', id: f.id, x: f.x, y: f.y - F.h / 2 });
+    // Stand where it went off, nudged up out of any wall or floor.
+    Object.assign(f, { x: at.x, y: at.y + F.h / 2, vx: 0, vy: 0 });
+    for (let k = 0; k < 40 && solids(world, st).some((r) => overlaps(bodyRect(f), r)); k++) f.y -= 2;
+    world.events.push({ type: 'warp', id: f.id, x: f.x, y: f.y - F.h / 2 });
+  }
+}
+
+// Burning and poison clouds: damage over time, no stun.
+function updateAilments(world) {
+  for (const f of world.fighters) {
+    if (f.bleed > 0) {
+      f.bleed = f.state === 'ok' ? Math.max(0, f.bleed - DT) : 0;
+      chip(world, f, f.bleedRate * DT, f.bleedBy, true);
+    }
+    if (f.burn <= 0) continue;
+    f.burn = f.state === 'ok' ? f.burn - DT : 0;
+    chip(world, f, GRENADES.fire.burn.perSecond * DT, f.burnBy, true);
+  }
+  world.clouds = world.clouds.filter((c) => {
+    c.t -= DT;
+    const per = c.perSecond ?? GRENADES[c.kind].cloud.perSecond;
+    if (per) for (const f of world.fighters) if (f.state === 'ok' && Math.hypot(center(f).x - c.x, center(f).y - c.y) < c.r) chip(world, f, per * DT, c.by, true);
+    return c.t > 0;
+  });
+}
+
+// Is this point inside a smoke or poison cloud? (Bots can't see through them.)
+export const inCloud = (world, x, y) => (world.clouds ?? []).some((c) => c.kind !== 'spore' && Math.hypot(c.x - x, c.y - y) < c.r * 0.9);
+
+// --- Moving stage pieces ----------------------------------------------------------------------
+
+const ease = (k) => k * k * (3 - 2 * k);
+const standingOn = (f, x, y, w) => f.state === 'ok' && f.grounded && Math.abs(f.y - y) < 0.5 && f.x + F.w / 2 > x && f.x - F.w / 2 < x + w;
+
+// Moves the stage's movers for this tick, carries whoever stands on them, and rebuilds world.live
+// (the blocks that are there right now). Timed movers run off the tick count, so they're the same
+// on every machine; `phase` staggers them.
+function updateMovers(world, st) {
+  if (!st.movers) return;
+  const time = world.tick * DT;
+  const live = [...st.blocks];
+  st.movers.forEach((def, i) => {
+    const m = world.movers[i];
+    const oldY = m.y;
+    if (def.kind === 'bridge') {
+      const c = MOVERS.bridge;
+      const t = (time + def.phase) % (c.up + c.warn + c.open);
+      m.on = t < c.up + c.warn;
+      m.warn = t >= c.up && m.on;
+    } else if (def.kind === 'lift') {
+      const c = MOVERS.lift;
+      const t = (time + def.phase) % (2 * (c.wait + c.travel));
+      const k = t < c.wait ? 0 : t < c.wait + c.travel ? ease((t - c.wait) / c.travel) : t < 2 * c.wait + c.travel ? 1 : 1 - ease((t - 2 * c.wait - c.travel) / c.travel);
+      m.y = def.bottom + (def.top - def.bottom) * k;
+    } else if (def.kind === 'crusher') {
+      const c = MOVERS.crusher;
+      let t = (time + def.phase) % (c.wait + c.warn + c.slam + c.hold + c.rise);
+      m.warn = t >= c.wait && t < c.wait + c.warn;
+      t -= c.wait + c.warn;
+      const k = t < 0 ? 0 : t < c.slam ? t / c.slam : t < c.slam + c.hold ? 1 : 1 - ease((t - c.slam - c.hold) / c.rise);
+      m.y = def.top + (def.bottom - def.top) * k;
+      if (m.y > oldY) crush(world, def, m);
+      else spikedUnderside(world, def, m);
+    } else if (def.kind === 'crumble') {
+      const c = MOVERS.crumble;
+      if (m.on && m.t < 0) {
+        if (world.fighters.some((f) => standingOn(f, def.x, def.y, def.w))) m.t = 0;
+      } else if (m.on) {
+        m.t += DT;
+        if (m.t >= c.shake) Object.assign(m, { on: false, t: 0 });
+      } else {
+        m.t += DT;
+        const rect = { x: def.x, y: def.y, w: def.w, h: def.h };
+        if (m.t >= c.gone && !world.fighters.some((f) => f.state === 'ok' && overlaps(rect, bodyRect(f)))) Object.assign(m, { on: true, t: -1 });
+      }
+      m.warn = m.on && m.t >= 0;
+    }
+    const dy = m.y - oldY;
+    if (dy !== 0) for (const f of world.fighters) if (standingOn(f, def.x, oldY, def.w)) f.y = m.y;
+    if (m.on) live.push({ x: def.x, y: m.y, w: def.w, h: def.h, look: def.look, oneWay: !!def.oneWay, glue: !!def.glue, slack: Math.max(0, -dy) });
+  });
+  world.live = live;
+}
+
+// A crusher that isn't falling: its spiked underside hurts like any spikes, pushing you down and
+// away from its middle.
+function spikedUnderside(world, def, m) {
+  const zone = { x: def.x, y: m.y + def.h, w: def.w, h: 3 };
+  for (const f of world.fighters) {
+    if (f.state !== 'ok' || world.spikeCooldown[f.id] !== undefined || !overlaps(zone, bodyRect(f))) continue;
+    world.spikeCooldown[f.id] = SPIKES.cooldown;
+    const side = f.x < def.x + def.w / 2 ? -1 : 1;
+    hit(world, f, SPIKES.damage, side * 0.5, 1, SPIKES.knockback, SPIKES.knockbackGrowth, -1, Infinity, true);
+    world.events.push({ type: 'spark', x: f.x, y: m.y + def.h, dx: side, dy: 1 });
+  }
+}
+
+// A slamming crusher hits anyone under it and shoves them out to the nearer side.
+function crush(world, def, m) {
+  const c = MOVERS.crusher;
+  const rect = { x: def.x, y: m.y, w: def.w, h: def.h };
+  const mid = def.x + def.w / 2;
+  for (const f of world.fighters) {
+    if (f.state !== 'ok' || !overlaps(rect, bodyRect(f))) continue;
+    const side = f.x < mid ? -1 : 1;
+    f.x = side < 0 ? def.x - F.w / 2 : def.x + def.w + F.w / 2;
+    if (world.spikeCooldown[f.id] !== undefined) continue;
+    world.spikeCooldown[f.id] = SPIKES.cooldown;
+    hit(world, f, c.damage, side, -0.35, c.knockback, c.knockbackGrowth, -1, Infinity, true);
+    world.events.push({ type: 'spark', x: f.x, y: f.y - F.h / 2, dx: side, dy: -0.3 });
+  }
+}
+
+// --- Storm ------------------------------------------------------------------------------------
+
+// The storm waits, then the safe area shrinks from both sides toward a random spot, in two steps.
+// On a stage built from sections, the zones snap to them: three sections, then one that the stage
+// allows to be the last (see canEndHere in sections.js).
+function createStorm(st, cfg, rng) {
+  const { left, right } = st.storm;
+  let zone1;
+  let zone2;
+  if (st.sections) {
+    const secs = st.sections;
+    const snap = (a, b) => [Math.max(left, a.left), Math.min(right, b.right)];
+    const final = secs.map((_, i) => i).filter((i) => secs[i].final);
+    const k = final[Math.floor(rng() * final.length)];
+    const j = clamp(k - Math.floor(rng() * 3), 0, secs.length - 3);
+    zone1 = snap(secs[j], secs[j + 2]);
+    zone2 = snap(secs[k], secs[k]);
+  } else {
+    const c2 = left + cfg.finalWidth / 2 + rng() * (right - left - cfg.finalWidth);
+    const c1 = clamp(c2, left + cfg.firstWidth / 2, right - cfg.firstWidth / 2);
+    zone1 = [c1 - cfg.firstWidth / 2, c1 + cfg.firstWidth / 2];
+    zone2 = [c2 - cfg.finalWidth / 2, c2 + cfg.finalWidth / 2];
+  }
+  return {
+    cfg,
+    time: 0,
+    left,
+    right,
+    wallLeft: left,
+    wallRight: right,
+    start: [left, right],
+    zone1,
+    zone2,
+  };
+}
+
+function updateStorm(world) {
+  const s = world.storm;
+  const c = s.cfg;
+  s.time += DT;
+  const t = s.time - c.startDelay;
+  let zone = s.start;
+  if (t > 0) {
+    zone = lerp2(s.start, s.zone1, clamp(t / c.firstShrink, 0, 1));
+    const t2 = t - c.firstShrink - c.hold;
+    if (t2 > 0) zone = lerp2(s.zone1, s.zone2, clamp(t2 / c.finalShrink, 0, 1));
+  }
+  [s.left, s.right] = zone;
+  // Each side of the storm: a pale band next to the safe zone (hurts), then the deep-red wall.
+  s.wallLeft = s.left - c.dangerBand * (s.left - s.start[0]);
+  s.wallRight = s.right + c.dangerBand * (s.start[1] - s.right);
+  for (const f of world.fighters) {
+    if (f.state === 'ok' && f.invincible <= 0 && (f.x < s.left || f.x > s.right)) f.damage = Math.min(999, f.damage + c.damagePerSecond * DT);
+  }
+}
+
+// The deep-red storm wall is the new edge of the stage: it stops you, but a hit that launches
+// you into it fast enough costs a life.
+function enforceStormWall(world, st) {
+  const s = world.storm;
+  const half = F.w / 2;
+  for (const f of world.fighters) {
+    if (f.state !== 'ok') continue;
+    if (f.x - half < s.wallLeft) {
+      if (f.hitstun > 0 && -f.vx > s.cfg.wallKoSpeed) knockOut(world, st, f);
+      else {
+        f.x = s.wallLeft + half;
+        f.vx = Math.max(f.vx, 0);
+      }
+    } else if (f.x + half > s.wallRight) {
+      if (f.hitstun > 0 && f.vx > s.cfg.wallKoSpeed) knockOut(world, st, f);
+      else {
+        f.x = s.wallRight - half;
+        f.vx = Math.min(f.vx, 0);
+      }
+    }
+  }
+}
+
+export function stormStatus(s) {
+  const c = s.cfg;
+  const t = s.time - c.startDelay;
+  if (t < 0) return { text: `STORM IN ${Math.ceil(-t)}`, next: t > -10 ? s.zone1 : null };
+  if (t < c.firstShrink) return { text: 'STORM CLOSING', next: s.zone1 };
+  const t2 = t - c.firstShrink - c.hold;
+  if (t2 < 0) return { text: `STORM IN ${Math.ceil(-t2)}`, next: s.zone2 };
+  if (t2 < c.finalShrink) return { text: 'STORM CLOSING', next: s.zone2 };
+  return { text: 'FINAL ZONE', next: null };
+}
+
+// --- Small helpers ----------------------------------------------------------------------------
+
+function approach(value, target, amount) {
+  return value < target ? Math.min(value + amount, target) : Math.max(value - amount, target);
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+const lerp2 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k];
+
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function circleHitsRect(cx, cy, r, rect) {
+  const nx = clamp(cx, rect.x, rect.x + rect.w);
+  const ny = clamp(cy, rect.y, rect.y + rect.h);
+  return (cx - nx) ** 2 + (cy - ny) ** 2 < r * r;
+}
+
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}

@@ -1,0 +1,7 @@
+# Installed packages and builds are recreated by npm
+node_modules/
+dist/
+*.tmp
+
+# Python bytecode from the art tools
+__pycache__/

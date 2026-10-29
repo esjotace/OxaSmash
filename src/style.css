@@ -1,0 +1,699 @@
+:root {
+  --bg: #12152a;
+  --panel: rgba(16, 19, 38, 0.92);
+  --line: #2c3361;
+  --text: #eef0ff;
+  --muted: #9aa1c7;
+  --accent: #8ef0ff;
+  --hot: #ff5d73;
+  --radius: 14px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+}
+
+/* The canvas is drawn at a whole multiple of the pixel-art view, at least as big as the window
+   (see RENDER_SCALE in src/game/game.js), so the browser only ever shrinks it a little: smooth
+   shrinking keeps it sharp, where stretching a small canvas made everything blurry. */
+#game canvas {
+  image-rendering: auto !important;
+}
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  background: rgba(12, 14, 30, 0.6);
+  backdrop-filter: blur(3px);
+}
+
+.screen[hidden] {
+  display: none;
+}
+
+.panel {
+  width: min(920px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px;
+}
+
+.panel.narrow {
+  width: min(520px, 100%);
+}
+
+.logo {
+  margin: 0;
+  font-size: clamp(2.6rem, 8vw, 4rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.logo span {
+  color: var(--hot);
+}
+
+.lede {
+  color: var(--muted);
+  margin: 8px 0 20px;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: #0b0d18;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 12px;
+  min-width: 0;
+}
+
+input:focus-visible,
+select:focus-visible,
+.btn:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+
+.mode {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+
+.mode h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.mode p {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.mode .btn {
+  margin-top: auto;
+}
+
+.mode .row {
+  margin: 0;
+}
+
+.join {
+  flex-wrap: nowrap;
+}
+
+.join input {
+  flex: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  font-weight: 700;
+}
+
+.btn {
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  color: var(--text);
+  background: #232951;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 18px;
+}
+
+.btn:hover {
+  background: #2c3366;
+}
+
+.btn.primary {
+  background: var(--hot);
+  border-color: var(--hot);
+  color: #1a0710;
+}
+
+.btn.primary:hover {
+  filter: brightness(1.08);
+}
+
+.btn.ghost {
+  background: transparent;
+}
+
+.btn.small {
+  padding: 7px 12px;
+  font-size: 0.88rem;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.help summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.help dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  font-size: 0.92rem;
+}
+
+.help dt {
+  color: var(--muted);
+}
+
+.help dd {
+  margin: 0;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  text-align: center;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: #0b0d18;
+  font: 600 0.8rem/1.6 ui-monospace, monospace;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.code-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.code {
+  font: 800 clamp(2.4rem, 10vw, 3.4rem) / 1.1 ui-monospace, monospace;
+  letter-spacing: 0.18em;
+  color: var(--accent);
+}
+
+.hint {
+  color: var(--muted);
+  margin: 4px 0 16px;
+}
+
+.players {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.players li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.players .dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.players .who {
+  font-weight: 700;
+}
+
+.players .tag {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-left: auto;
+}
+
+.winner {
+  margin: 0 0 16px;
+  font-size: 2rem;
+}
+
+.status {
+  color: var(--muted);
+  min-height: 1.5em;
+  margin: 8px 0 0;
+}
+
+.quit {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  background: rgba(11, 13, 24, 0.7);
+}
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: min(520px, calc(100% - 32px));
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: #2a1020;
+  border: 1px solid var(--hot);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+#toast.show {
+  opacity: 1;
+}
+
+@media (max-width: 560px) {
+  .panel {
+    padding: 20px 16px;
+  }
+}
+
+/* The in-game menu (Esc). */
+.game-menu[hidden] {
+  display: none;
+}
+
+.game-menu {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(6, 8, 18, 0.55);
+  z-index: 20;
+}
+
+.menu-panel {
+  width: min(560px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: grid;
+  gap: 16px;
+}
+
+.menu-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tab {
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.tab.on {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.menu-page {
+  display: grid;
+  gap: 12px;
+}
+
+.menu-page[hidden] {
+  display: none;
+}
+
+.slider {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.char-pick {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+
+/* A character's idle animation, from its sprite sheet (4 frames of 32 px, shown 3× big). */
+.char-sprite {
+  width: 96px;
+  height: 96px;
+  background-size: 384px 96px;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  animation: char-idle 0.67s steps(4) infinite;
+  display: grid;
+  place-items: center;
+  font-size: 48px;
+  color: var(--muted);
+}
+
+@keyframes char-idle {
+  to {
+    background-position: -384px 0;
+  }
+}
+
+.char-name {
+  text-align: center;
+  font-weight: 700;
+  margin: 0;
+}
+
+.bind-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.bind-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.bind-list .btn {
+  min-width: 120px;
+  padding: 6px 12px;
+}
+
+.bind-list .btn.waiting {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.hint {
+  margin: 0;
+  font-size: 0.9em;
+}
+
+/* Same screen setup. */
+.setup {
+  display: grid;
+  gap: 16px;
+}
+
+.steps {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+
+.steps li {
+  counter-increment: step;
+  color: var(--muted);
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.steps li::before {
+  content: counter(step) '. ';
+}
+
+.steps li.on {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.setup-step[hidden] {
+  display: none;
+}
+
+.choices .btn.on,
+.choices .btn[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The field a controller is on, in the page's menus. */
+.pad-focus {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Training: what to spawn (a row of category chips, a grid of sprites, the chosen one's details)
+   and the dummies' settings. */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font: inherit;
+  font-size: 0.9em;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.chip.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(142, 240, 255, 0.08);
+}
+
+.art-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 6px;
+  max-height: 210px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.art-pick {
+  font: inherit;
+  font-size: 0.75em;
+  line-height: 1.2;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 4px;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
+.art-pick.on {
+  border-color: var(--accent);
+  background: rgba(142, 240, 255, 0.08);
+}
+
+.art-pick img,
+.art-info img {
+  image-rendering: pixelated;
+  object-fit: contain;
+}
+
+.art-pick img {
+  width: 48px;
+  height: 28px;
+}
+
+.art-info {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 4px 14px;
+  align-items: start;
+}
+
+.art-info img {
+  width: 96px;
+  height: 64px;
+  grid-row: span 2;
+}
+
+.art-info h3 {
+  margin: 0;
+}
+
+.art-info p {
+  margin: 0;
+}
+
+.art-info .stats,
+.art-info .quirks,
+.art-info .spawn {
+  grid-column: 1 / -1;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 0.9em;
+}
+
+.stats div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.stats dt {
+  color: var(--muted);
+}
+
+.stats dd {
+  margin: 0;
+}
+
+.quirks {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.9em;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+}
+
+/* Rules tucked away until wanted (the crown, the storm). */
+.custom-rules {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.custom-rules summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.custom-rules[open] summary {
+  margin-bottom: 10px;
+  color: var(--text);
+}
+
+/* The Controller tab's live readout of what the browser says about each controller. */
+.pad-live {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 12px/1.4 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+/* A controller button's picture beside its name in the bindings list (32 px: the 16 px frames
+   at 2×, from the picture sheet; the frame is chosen by the page). */
+.pad-icon {
+  display: inline-block;
+  width: 32px;
+  height: 32px;
+  margin: -6px 8px -6px -4px;
+  vertical-align: middle;
+  background-repeat: no-repeat;
+  background-size: 1632px 96px;
+  image-rendering: pixelated;
+}
