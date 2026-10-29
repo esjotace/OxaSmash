@@ -1,5 +1,7 @@
 # OxaSmash
 
+Proof of concept for a smash like game inspired by John Wick.
+
 A gun-fu platform fighter for the browser. Shoot to build up damage, hit to send people flying, stay out of the storm.
 Play solo against bots, two players on one keyboard, or online with friends using a 5-letter room code.
 
