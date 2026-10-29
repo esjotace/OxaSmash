@@ -75,7 +75,10 @@ export class HostRoom {
     // so everyone's index stays put; they're cleared when the room goes back to the lobby.
     this.players = [{ kind: 'host', name: cleanName(hostName) }];
     this.inMatch = false;
-    this.handlers = { change() {}, input() {}, leave() {}, error() {} };
+    this.duelOpen = false; // after a match, while the honor duels run: newcomers can join to watch
+    // (gone: someone left, whatever's going on; joined: someone came in to watch the duels; duel:
+    // a guest's duel move.)
+    this.handlers = { change() {}, input() {}, leave() {}, error() {}, gone() {}, joined() {}, duel() {} };
     peer.on('connection', (conn) => this.accept(conn));
     peer.on('error', (err) => this.handlers.error(err));
     // Ping each guest every second; the round trip is their ms (see pings).
@@ -103,6 +106,12 @@ export class HostRoom {
     if (!msg || typeof msg !== 'object') return;
     const index = this.players.findIndex((p) => p.conn === conn);
     if (msg.t === 'hello' && index < 0) {
+      // (During the honor duels, come in to watch them.)
+      if (this.inMatch && this.duelOpen && this.players.length < RULES.maxPlayers) {
+        this.players.push({ kind: 'remote', name: cleanName(msg.name), conn, char: typeof msg.char === 'string' ? msg.char.slice(0, 24) : null, watcher: true });
+        this.handlers.joined(this.players.length - 1);
+        return;
+      }
       if (this.inMatch || this.players.length >= RULES.maxPlayers) {
         conn.send({ t: 'refused', reason: this.inMatch ? 'That room is in the middle of a match. Try again in a moment.' : 'That room is full.' });
         setTimeout(() => conn.close(), 300);
@@ -115,6 +124,9 @@ export class HostRoom {
       if (input) this.handlers.input(index, input);
     } else if (msg.t === 'pong' && index >= 0 && typeof msg.s === 'number') {
       this.players[index].ms = Math.max(0, Math.round(performance.now() - msg.s));
+    } else if (msg.t === 'duel' && index >= 0 && typeof msg.a === 'string') {
+      // A duel move: only plain fields go through (checked by the duel board).
+      this.handlers.duel(index, { a: msg.a, to: Number(msg.to), from: Number(msg.from), mode: String(msg.mode ?? ''), on: !!msg.on });
     } else if (msg.t === 'char' && index >= 0 && typeof msg.char === 'string') {
       // A guest picked a character (checked against the cast where it's used).
       this.players[index].char = msg.char.slice(0, 24);
@@ -129,6 +141,7 @@ export class HostRoom {
       this.players[index].left = true;
       this.players[index].conn = null;
       this.handlers.leave(index);
+      this.handlers.gone(index);
     } else {
       this.players.splice(index, 1);
       this.sendLobby();
@@ -170,6 +183,11 @@ export class HostRoom {
     });
   }
 
+  sendTo(index, msg) {
+    const p = this.players[index];
+    if (p?.conn?.open) p.conn.send(msg);
+  }
+
   broadcast(msg) {
     for (const p of this.players) if (p.conn?.open) p.conn.send(msg);
   }
@@ -181,7 +199,17 @@ export class HostRoom {
 
   endMatch() {
     this.inMatch = false;
+    this.duelOpen = false;
     this.sendLobby();
+  }
+
+  // A duel: its two players (slots: room indexes) play as fighters 0 and 1; watchers (room
+  // indexes) see it as spectators (you: -1). Others aren't sent it.
+  startDuel(setup, slots, watchers) {
+    this.players.forEach((p, i) => {
+      const you = slots.indexOf(i);
+      if (p.conn?.open && (you >= 0 || watchers.includes(i))) p.conn.send({ t: 'start', ...setup, you });
+    });
   }
 
   // Each player's ping in ms, in fighter order: 0 for the host, null for bots (and guests not
@@ -231,7 +259,7 @@ export class ClientRoom {
     this.code = code;
     this.leaving = false;
     this.reason = 'The host closed the room.';
-    this.handlers = { lobby() {}, start() {}, snap() {}, closed() {} };
+    this.handlers = { lobby() {}, start() {}, snap() {}, closed() {}, duels() {} };
     conn.on('data', (msg) => this.receive(msg));
     conn.on('close', () => this.lost());
     peer.on('error', () => this.lost());
@@ -247,6 +275,7 @@ export class ClientRoom {
     if (msg.t === 'lobby') this.handlers.lobby(msg);
     else if (msg.t === 'start') this.handlers.start(msg);
     else if (msg.t === 'snap') this.handlers.snap(msg);
+    else if (msg.t === 'duels') this.handlers.duels(msg);
     else if (msg.t === 'ping' && this.conn.open) this.conn.send({ t: 'pong', s: msg.s });
     else if (msg.t === 'refused' && typeof msg.reason === 'string') this.reason = msg.reason.slice(0, 120);
   }
@@ -260,6 +289,11 @@ export class ClientRoom {
 
   sendInput(input) {
     if (this.conn.open) this.conn.send({ t: 'in', i: encodeInput(input) });
+  }
+
+  // A duel move (see DuelBoard.act).
+  sendDuel(move) {
+    if (this.conn.open) this.conn.send({ t: 'duel', ...move });
   }
 
   // The character this guest picked (null: dealt at random).

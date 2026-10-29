@@ -13,8 +13,8 @@ import { aimOrigin, gunOrigin } from '../sim/world.js';
 import { settings, padBindings, ui, keyName, padButtonName, padStyle, firstPad } from './settings.js';
 import { hasIcon } from './padicons.js';
 
-const ACTIONS = ['left', 'right', 'up', 'down', 'jump', 'shoot', 'melee', 'dodge', 'cycle', 'block', 'reload', 'hide', 'pickup', 'grenade'];
-const COUNTERS = { jump: 'jp', shoot: 'sp', melee: 'mp', dodge: 'xp', cycle: 'cp', down: 'dp', reload: 'rp', hide: 'hp', pickup: 'ep', grenade: 'gp' };
+const ACTIONS = ['left', 'right', 'up', 'down', 'jump', 'shoot', 'melee', 'jab', 'dodge', 'cycle', 'block', 'reload', 'hide', 'pickup', 'grenade'];
+const COUNTERS = { jump: 'jp', shoot: 'sp', melee: 'mp', jab: 'kp', dodge: 'xp', cycle: 'cp', down: 'dp', reload: 'rp', hide: 'hp', pickup: 'ep', grenade: 'gp' };
 const STICK = 0.35; // stick dead zone
 const PAD_AIM_DISTANCE = 110; // where the crosshair sits along a controller's aim (px)
 
@@ -32,7 +32,7 @@ export class Controls {
     this.rawDown = null; // the controller's buttons last tick, and where its axes rest (see readPad)
     this.axisBase = null;
     this.padIndex = -1;
-    this.counts = { jp: 0, sp: 0, mp: 0, dp: 0, rp: 0, hp: 0, ep: 0, gp: 0, xp: 0, cp: 0 };
+    this.counts = { jp: 0, sp: 0, mp: 0, dp: 0, rp: 0, hp: 0, ep: 0, gp: 0, xp: 0, cp: 0, kp: 0 };
     this.mouseMelee = false;
     this.mouseGrenade = false;
     this.mouseShoot = false;
@@ -149,6 +149,8 @@ export class Controls {
     for (const [action, button] of Object.entries(padBindings(`pad${this.pad}`))) held[action] = pressed(button);
     const [lx = 0, ly = 0, rx = 0, ry = 0] = gp.axes;
     held.down ||= ly > 0.6;
+    // (Up, for DI: the stick pushed up, or whatever's bound to hide, the D-pad's up by default.)
+    held.up = ly < -0.6 || !!held.hide;
     for (const [action, counter] of Object.entries(COUNTERS)) {
       if (held[action] && !this.padHeld[action]) this.counts[counter] = bump(this.counts[counter]);
     }
@@ -253,6 +255,7 @@ export class Controls {
     return {
       mx,
       down,
+      up: this.held('hide') || !!ph.up,
       jump: this.held('jump') || !!ph.jump,
       crouch: down,
       shoot: this.held('shoot') || this.mouseShoot || !!ph.shoot,

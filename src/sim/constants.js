@@ -60,7 +60,8 @@ export const AIR_JUMP_SPEED = Math.sqrt(2 * GRAVITY * FIGHTER.airJumpHeight);
 // ammo. Everyone starts with the pistol; the rest are pickups.
 // Where a gun is held (HOLD, a share of the body's height from the feet): light guns at the chest,
 // heavy ones at the waist, special ones at the shoulder, sighted along, so a level shot from a
-// special gun lands in the head.
+// special gun lands in the head. (holdAt: held where another weight is, e.g. the revolver: heavy,
+// but held up at the chest like the 9mm.)
 //   holdDistance: how far the gun's grip floats from where it's held toward the pointer. Where
 //   shots leave (muzzle: px along the aim; muzzleDrop: px below the aim line) comes from the
 //   sprite (gunPoints.js, made by tools/gun_points.py).
@@ -72,16 +73,16 @@ export const AIR_JUMP_SPEED = Math.sqrt(2 * GRAVITY * FIGHTER.airJumpHeight);
 const gun = (g) => ({ automatic: false, pellets: 1, spreadDegrees: 2, recoil: 40, holdDistance: 8, muzzle: 20, muzzleDrop: 0, knockback: 0, knockbackGrowth: 0, ...g });
 export const GUNS = {
   pistol: gun({ name: '9mm', weight: 'light', magazineSize: 12, magazines: 2, reloadTime: 1.1, fireInterval: 0.16, bulletSpeed: 900, bulletRange: 600, damage: 3 }),
-  revolver: gun({ name: 'Revolver', weight: 'heavy', magazineSize: 6, magazines: 2, reloadTime: 1.4, fireInterval: 0.45, bulletSpeed: 1000, bulletRange: 700, damage: 8, knockback: 150, knockbackGrowth: 1.6, recoil: 90 }),
+  revolver: gun({ name: 'Revolver', weight: 'heavy', holdAt: 'light', magazineSize: 6, magazines: 2, reloadTime: 1.4, fireInterval: 0.45, bulletSpeed: 1000, bulletRange: 700, damage: 8, knockback: 150, knockbackGrowth: 1.6, recoil: 90 }),
   smg: gun({ name: 'SMG', weight: 'light', magazineSize: 30, magazines: 2, reloadTime: 1.3, automatic: true, fireInterval: 0.07, spreadDegrees: 6, bulletSpeed: 850, bulletRange: 450, damage: 1.5, recoil: 15 }),
   rifle: gun({ name: 'Assault Rifle', weight: 'light', magazineSize: 24, magazines: 2, reloadTime: 1.5, automatic: true, fireInterval: 0.11, spreadDegrees: 2.5, bulletSpeed: 1000, bulletRange: 750, damage: 2.5, recoil: 20 }),
-  minigun: gun({ heavyThrow: true, name: 'Minigun', weight: 'light', magazineSize: 80, magazines: 2, reloadTime: 2.5, automatic: true, fireInterval: 0.05, spreadDegrees: 7, bulletSpeed: 900, bulletRange: 550, damage: 1.4, recoil: 12, slowWhileFiring: 0.45 }),
+  minigun: gun({ noCover: true, heavyThrow: true, name: 'Minigun', weight: 'light', magazineSize: 80, magazines: 2, reloadTime: 2.5, automatic: true, fireInterval: 0.05, spreadDegrees: 7, bulletSpeed: 900, bulletRange: 550, damage: 1.4, recoil: 12, slowWhileFiring: 0.45 }),
   // Pellets only push and stun once more than half of one shot's pellets hit the same person
   // (knockbackShare); fewer just add damage. Its spread is always the standing one (steadySpread),
   // so crouching doesn't tighten it into a rifle.
   shotgun: gun({ name: 'Shotgun', weight: 'heavy', knockbackShare: 0.5, steadySpread: true, magazineSize: 6, magazines: 2, reloadTime: 1.6, fireInterval: 0.7, pellets: 7, spreadDegrees: 14, bulletSpeed: 800, bulletRange: 220, damage: 2.2, knockback: 220, knockbackGrowth: 1.2, recoil: 260 }),
-  sniper: gun({ name: 'Sniper', weight: 'special', magazineSize: 4, magazines: 2, reloadTime: 2, fireInterval: 1.1, spreadDegrees: 0, bulletSpeed: 1800, bulletRange: 1400, damage: 20, knockback: 260, knockbackGrowth: 2.5, recoil: 160 }),
-  rocket: gun({ name: 'Rocket Launcher', weight: 'special', magazineSize: 1, magazines: 2, reloadTime: 1.8, fireInterval: 1, spreadDegrees: 0, bulletSpeed: 420, bulletRange: 900, damage: 0, recoil: 200, explode: { radius: 72, damage: 14, knockback: 360, knockbackGrowth: 4 } }),
+  sniper: gun({ noCover: true, name: 'Sniper', weight: 'special', magazineSize: 4, magazines: 2, reloadTime: 2, fireInterval: 1.1, spreadDegrees: 0, bulletSpeed: 1800, bulletRange: 1400, damage: 20, knockback: 260, knockbackGrowth: 2.5, recoil: 160 }),
+  rocket: gun({ noCover: true, name: 'Rocket Launcher', weight: 'special', magazineSize: 1, magazines: 2, reloadTime: 1.8, fireInterval: 1, spreadDegrees: 0, bulletSpeed: 420, bulletRange: 900, damage: 0, recoil: 200, explode: { radius: 72, damage: 14, knockback: 360, knockbackGrowth: 4 } }),
   blaster: gun({ name: 'Star Blaster', weight: 'heavy', magazineSize: 10, magazines: 2, reloadTime: 1.5, fireInterval: 0.35, spreadDegrees: 1, bulletSpeed: 520, bulletRange: 900, damage: 6, knockback: 200, knockbackGrowth: 2, bounces: 2, bounceGrowth: 2 }),
   // Hold to draw (`charge.time` s for a full draw), let go to loose: the longer the draw, the
   // faster and harder (from `charge.min` of it); drawn past `charge.heavyAt` it pushes and stuns.
@@ -92,7 +93,7 @@ export const GUNS = {
   // Three bullets, ever; each one a huge launch.
   golden: gun({ name: 'Golden Gun', weight: 'special', magazineSize: 3, magazines: 1, reloadTime: 1, fireInterval: 0.8, spreadDegrees: 0, bulletSpeed: 1400, bulletRange: 1000, damage: 18, knockback: 460, knockbackGrowth: 6, recoil: 160 }),
   // Hold to charge; only a full charge fires: a beam through walls and everyone in its path.
-  railgun: gun({ name: 'Railgun', weight: 'special', magazineSize: 2, magazines: 2, reloadTime: 2.2, fireInterval: 0.6, spreadDegrees: 0, bulletSpeed: 1, bulletRange: 1200, damage: 16, knockback: 300, knockbackGrowth: 3.2, recoil: 220, charge: { time: 0.8, full: true }, beam: true }),
+  railgun: gun({ noCover: true, name: 'Railgun', weight: 'special', magazineSize: 2, magazines: 2, reloadTime: 2.2, fireInterval: 0.6, spreadDegrees: 0, bulletSpeed: 1, bulletRange: 1200, damage: 16, knockback: 300, knockbackGrowth: 3.2, recoil: 220, charge: { time: 0.8, full: true }, beam: true }),
   // A short cone of flames that go through people and set them on fire (`burn` s; the fire
   // grenade's burn). Drawn tilted: see TILTED_GUNS.
   firestaff: gun({ name: 'Fire Staff', weight: 'light', magazineSize: 60, magazines: 2, reloadTime: 2, automatic: true, fireInterval: 0.05, pellets: 2, spreadDegrees: 14, steadySpread: true, bulletSpeed: 260, bulletRange: 95, damage: 0.4, recoil: 0, pierce: true, burn: 2 }),
@@ -101,15 +102,15 @@ export const GUNS = {
   money: gun({ heavyThrow: true, name: 'Make It Rain', weight: 'light', magazineSize: 40, magazines: 2, reloadTime: 2, automatic: true, fireInterval: 0.08, spreadDegrees: 6, bulletSpeed: 700, bulletRange: 550, damage: 1.5, recoil: 12, cash: true }),
   // Lobs a money bag that bursts into a shower of CASH: everyone near is pushed away, and the
   // money lands and lies around (see LOOT) for anyone to grab and heal.
-  jackpot: gun({ name: 'Jackpot', weight: 'special', magazineSize: 1, magazines: 2, reloadTime: 1.8, fireInterval: 1, spreadDegrees: 0, bulletSpeed: 380, bulletRange: 900, damage: 0, recoil: 120, gravity: 350, lift: 80, jackpot: { radius: 64, knockback: 240, knockbackGrowth: 1.5, pieces: 14 } }),
+  jackpot: gun({ noCover: true, name: 'Jackpot', weight: 'special', magazineSize: 1, magazines: 2, reloadTime: 1.8, fireInterval: 1, spreadDegrees: 0, bulletSpeed: 380, bulletRange: 900, damage: 0, recoil: 120, gravity: 350, lift: 80, jackpot: { radius: 64, knockback: 240, knockbackGrowth: 1.5, pieces: 14 } }),
   // Lobs slime that hops `hops` times; wherever it lands it leaves a puddle of glue (see SLIME).
-  slimer: gun({ name: 'Slime Launcher', weight: 'heavy', magazineSize: 4, magazines: 2, reloadTime: 1.6, fireInterval: 0.5, spreadDegrees: 2, bulletSpeed: 380, bulletRange: 1500, damage: 3, knockback: 140, knockbackGrowth: 1.2, recoil: 60, gravity: 650, lift: 120, hops: 2 }),
+  slimer: gun({ noCover: true, name: 'Slime Launcher', weight: 'heavy', magazineSize: 4, magazines: 2, reloadTime: 1.6, fireInterval: 0.5, spreadDegrees: 2, bulletSpeed: 380, bulletRange: 1500, damage: 3, knockback: 140, knockbackGrowth: 1.2, recoil: 60, gravity: 650, lift: 120, hops: 2 }),
   // A short spray of spores; about one in `spore.every` leaves a small poison patch where it stops.
-  spores: gun({ heavyThrow: true, name: 'Spore Sprayer', weight: 'light', magazineSize: 40, magazines: 2, reloadTime: 1.8, automatic: true, fireInterval: 0.09, spreadDegrees: 10, steadySpread: true, bulletSpeed: 230, bulletRange: 140, damage: 0.5, recoil: 0, spore: { every: 3, radius: 40, time: 4, perSecond: 3, max: 12 } }),
+  spores: gun({ noCover: true, heavyThrow: true, name: 'Spore Sprayer', weight: 'light', magazineSize: 40, magazines: 2, reloadTime: 1.8, automatic: true, fireInterval: 0.09, spreadDegrees: 10, steadySpread: true, bulletSpeed: 230, bulletRange: 140, damage: 0.5, recoil: 0, spore: { every: 3, radius: 40, time: 4, perSecond: 3, max: 12 } }),
 };
 // Guns drawn tilted 45° (tip up and right), held at (ox, oy) of the sprite; `tip`: px from the
 // hand to where shots leave.
-export const TILTED_GUNS = { firestaff: { ox: 0.25, oy: 0.75, tip: 23 } };
+export const TILTED_GUNS = { firestaff: { ox: 0.25, oy: 0.75, tip: 23 }, blaster: { ox: 0.25, oy: 0.75, tip: 22 } };
 for (const [key, g] of Object.entries(GUNS)) {
   const p = GUN_POINTS[key];
   if (TILTED_GUNS[key]) g.muzzle = g.holdDistance + TILTED_GUNS[key].tip;
@@ -151,9 +152,11 @@ export const HOLD = { light: 0.56, heavy: 0.38, special: 0.68 };
 export const ACCURACY = { crouch: 0.15, still: 0.4, moving: 1.5, air: 1.8, movingExtra: 2, airExtra: 3 };
 // An empty gun with no magazines left is thrown (any gun): it tumbles and hits like a brick.
 // (Hold the trigger `hold` s to wind up the throw, then let go; a tap just clicks, so you can keep
-// the empty gun.) A light gun (not one marked heavyThrow: the big ones) comes back: after `out` s, or once it hits something, it arcs back to
-// you (`back` s to reach you); catch it (it's yours again, empty) for style.
-export const GUN_THROW = { hold: 0.4, speed: 420, damage: 6, knockback: 180, knockbackGrowth: 1.6, out: 0.35, back: 0.5, gravity: 500, catchReach: 14 };
+// the empty gun.) A light gun (not one marked heavyThrow: the big ones) that hits an enemy bounces
+// back, arcing to you (`back` s to reach you): press pick up as it gets there (`catchReach` px) to
+// catch it, for style. Uncaught, or thrown and missing, a gun falls and lies on the floor; an empty
+// one there vanishes after `emptyLife` s (blinking for the last `emptyBlink`).
+export const GUN_THROW = { hold: 0.4, speed: 420, damage: 6, knockback: 180, knockbackGrowth: 1.6, back: 0.5, gravity: 500, catchReach: 24, emptyLife: 10, emptyBlink: 2 };
 
 // A shot in the head (the top `height` px of a standing body; less crouched) stuns, even from a
 // light gun, and hurts more.
@@ -213,7 +216,8 @@ export const STRIKE = {
 // Quirks: backstab (from behind: damage × damageMul, and a push even from a light weapon), uppercut (launches straight up), homerun
 // (launches flat and far), unblockable (goes through blocks). rising: the swing goes from below
 // to above (the rest go from above to below). thrust: a straight jab along the aim instead of a
-// swing (no arc).
+// swing (no arc): drawn back in the wind-up, then shot out `travel` px to `reach` while it hits
+// (by default from 40% of the reach).
 // hitSound: what a landed hit sounds like: cut, stab or blunt.
 // replacesGun: it goes in the gun slot (dropping your gun) and the shoot button swings it; the
 // melee button still punches, or swings your melee weapon.
@@ -233,6 +237,7 @@ export const MELEE = {
     reach: 16, radius: 9, arc: 75, startup: 0.03, active: 0.08, recovery: 0.1, lunge: 60,
     // Bullets touching the blade mid-swing fly off toward the pointer, as yours, and hit harder.
     deflect: { damageMul: 1.5, knockbackMul: 1.4, speedMul: 1.1 },
+    heavy: { pushes: true, damage: 7, knockback: 200, knockbackGrowth: 2.5, arc: 90, startup: 0.05, active: 0.1, recovery: 0.16 },
   },
   bolivar: {
     name: "Bolívar's Sword", weight: 'heavy', hitSound: 'cut',
@@ -254,18 +259,20 @@ export const MELEE = {
     backstab: { damageMul: 2, knockback: 220, knockbackGrowth: 2.5 },
     // Made for throwing: faster and flatter than other light weapons.
     throw: { ...LIGHT_THROW, holdToThrow: 0.2, speed: 600, lift: 20, gravity: 300, damage: 6 },
+    heavy: { pushes: true, damage: 6, knockback: 190, knockbackGrowth: 2.3, arc: 70, startup: 0.05, active: 0.08, recovery: 0.14 },
   },
   machete: {
     name: 'Machete', weight: 'light', hitSound: 'cut',
     damage: 6, knockback: 90, knockbackGrowth: 0.5,
     reach: 15, radius: 10, arc: 90, startup: 0.04, active: 0.09, recovery: 0.12, lunge: 60,
-    combo: { hits: 3, window: 0.8, launch: { knockback: 280, knockbackGrowth: 4 } },
+    heavy: { pushes: true, damage: 8, knockback: 200, knockbackGrowth: 2.5, arc: 100, startup: 0.06, active: 0.1, recovery: 0.16, combo: { hits: 3, window: 0.8, launch: { knockback: 280, knockbackGrowth: 4 } } },
   },
   nodachi: {
     name: 'Nodachi', weight: 'light', hitSound: 'cut',
     damage: 7, knockback: 100, knockbackGrowth: 0.5,
     reach: 22, radius: 9, arc: 60, startup: 0.07, active: 0.1, recovery: 0.18, lunge: 50,
     charge: { time: 0.4, dash: 520, launch: { knockback: 300, knockbackGrowth: 4.2 } },
+    heavy: { pushes: true, damage: 9, knockback: 210, knockbackGrowth: 2.6, arc: 75, startup: 0.09, active: 0.12, recovery: 0.2 },
   },
   // In the gun slot. Tap: a long thrust with a moderate push. Hold: throw it on its chain, in an
   // arc. Hit someone and they're stunned and reeled in to melee range; miss and it's reeled back
@@ -296,6 +303,7 @@ export const MELEE = {
     reach: 17, radius: 11, arc: 80, startup: 0.14, active: 0.1, recovery: 0.3, lunge: 50,
     homerun: true,
     power: { time: 1.2, graded: true, slow: 0.1, damage: 9, knockback: 300, knockbackGrowth: 5, full: { damage: 11, knockback: 340, knockbackGrowth: 5.8 } },
+    heavy: { damage: 7, knockback: 200, knockbackGrowth: 3 },
   },
   cleaver: {
     name: 'Cleaver', weight: 'heavy', hitSound: 'cut',
@@ -339,6 +347,7 @@ export const MELEE = {
       { scale: 0.25, chance: 0.3, pool: ['PATO', 'BICHO', 'FARISEO', 'DISCORD', 'BUENAS'] },
       { scale: 0.1, chance: 0.15, pool: ['SI ON', 'LOL', 'XD', 'LMAO'] },
     ],
+    jab: { damage: 4 },
   },
   // Blocking with the pan also stops bullets from the front (they ring off it). Its hits bonk:
   // stunned a little longer.
@@ -358,6 +367,7 @@ export const MELEE = {
     reach: 14, radius: 11, arc: 80, startup: 0.1, active: 0.1, recovery: 0.26, lunge: 50,
     blocksBullets: true,
     power: { time: 0.45, damage: 9, knockback: 220, knockbackGrowth: 3.6, bonk: 0.25, hitSound: 'crit-high' },
+    heavy: { damage: 8, knockback: 170, knockbackGrowth: 2.4 },
   },
   // A tap is a moderate push. Held `power.time` s, the swing hits harder and you take a bite (it
   // heals you); after the last bite it's gone.
@@ -366,6 +376,7 @@ export const MELEE = {
     damage: 7, knockback: 170, knockbackGrowth: 2.4,
     reach: 14, radius: 12, arc: 75, startup: 0.12, active: 0.1, recovery: 0.3, lunge: 50,
     power: { time: 0.5, damage: 10, knockback: 250, knockbackGrowth: 4.2, bites: { heal: 5, count: 5 } },
+    heavy: { damage: 9, knockback: 210, knockbackGrowth: 3.3 },
   },
   // A slap with it leaves the floor feeling like ice to them for `slippery` s.
   fish: {
@@ -373,6 +384,7 @@ export const MELEE = {
     damage: 4, knockback: 110, knockbackGrowth: 0.6,
     reach: 14, radius: 9, arc: 70, startup: 0.03, active: 0.08, recovery: 0.1, lunge: 60,
     slippery: 2.5,
+    heavy: { pushes: true, damage: 6, knockback: 200, knockbackGrowth: 2.4, arc: 90, startup: 0.05, active: 0.1, recovery: 0.14 },
   },
   // A hit takes their weapon (the one in hand first, then the other) and drops it behind you.
   pliers: {
@@ -380,6 +392,7 @@ export const MELEE = {
     damage: 3, knockback: 80, knockbackGrowth: 0.4,
     reach: 12, radius: 9, arc: 50, startup: 0.04, active: 0.08, recovery: 0.14, lunge: 70,
     yoink: true,
+    heavy: { pushes: true, damage: 5, knockback: 180, knockbackGrowth: 2.2, arc: 70, startup: 0.06, active: 0.1, recovery: 0.16 },
   },
   // Too heavy to swing: the attack only throws it, in a high arc (it lands as a pickup). You move
   // at `carrySlow` of your speed carrying it.
@@ -388,15 +401,15 @@ export const MELEE = {
     damage: 0, knockback: 0, knockbackGrowth: 0,
     reach: 10, radius: 10, arc: 0, startup: 0, active: 0, recovery: 0, lunge: 0,
     throw: { holdToThrow: 0, speed: 300, lift: 230, gravity: 900, damage: 16, knockback: 380, knockbackGrowth: 5 },
+    jab: { damage: 6, knockback: 140, knockbackGrowth: 1 },
   },
-  // A long thrust; attack again within `followUp.window` s (or during it) for a wide sweep from
-  // behind you round to the front.
+  // The jab is its long thrust; the heavy a wide sweep from behind you round to the front.
   halberd: {
     name: 'Halberd', weight: 'heavy', hitSound: 'stab',
     // (The thrust is a light poke that sets up the sweep, which is slower and hits hard.)
     damage: 6, knockback: 120, knockbackGrowth: 1,
     reach: 46, radius: 8, arc: 0, thrust: true, startup: 0.1, active: 0.1, recovery: 0.22, lunge: 40,
-    followUp: { window: 0.45, hitSound: 'cut', damage: 11, knockback: 300, knockbackGrowth: 4.6, radius: 11, arc: 110, startup: 0.14, active: 0.2, recovery: 0.4, lunge: 30 },
+    heavy: { thrust: false, hitSound: 'cut', damage: 11, knockback: 300, knockbackGrowth: 4.6, radius: 11, arc: 110, startup: 0.14, active: 0.2, recovery: 0.4, lunge: 30 },
   },
   // Tap to swing. Hold to spin it round you: the ball knocks away anyone it touches (each at most
   // every `every` s) and you move at `slow` of your speed.
@@ -428,7 +441,7 @@ export const MELEE = {
     damage: 3, knockback: 80, knockbackGrowth: 0.4,
     reach: 14, radius: 10, arc: 60, startup: 0.05, active: 0.1, recovery: 0.14, lunge: 60,
     rising: true,
-    paint: { length: 56, time: 10, slow: 0.55, ammo: 6 },
+    heavy: { pushes: true, damage: 5, knockback: 190, knockbackGrowth: 2.3, arc: 80, startup: 0.07, active: 0.12, recovery: 0.16, paint: { length: 56, time: 10, slow: 0.55, ammo: 6 } },
   },
 };
 
@@ -440,14 +453,50 @@ export const SWING_HAND = 4;
 for (const [key, m] of Object.entries(MELEE)) {
   const p = MELEE_POINTS[key];
   if (!p) continue;
-  // (A thrust's follow-up swing, the halberd's sweep, follows the art like any swing.)
-  if (m.followUp) Object.assign(m.followUp, { length: p.length, reach: SWING_HAND + p.length - m.followUp.radius * 0.5 });
+  // (A thrust whose heavy is a swing, the halberd's sweep, follows the art like any swing.)
+  if (m.heavy?.thrust === false) Object.assign(m.heavy, { length: p.length, reach: SWING_HAND + p.length - (m.heavy.radius ?? m.radius) * 0.5 });
   if (m.thrust) continue;
   m.length = p.length;
   m.reach = SWING_HAND + p.length - m.radius * 0.5;
 }
-// A follow-up swing's whole stats: the weapon's, with the follow-up's on top.
-for (const m of Object.values(MELEE)) if (m.followUp) m.sweep = { ...m, ...m.followUp, thrust: false, followUp: null };
+// Jab and heavy. Every weapon (and the fists) has two attacks: the jab (its own button: L, or C)
+// is a quick straight poke along the aim that never launches (JAB), to start and carry combos; the
+// heavy (the melee button) is the full swing. A weapon with a `heavy` block has light stats of its
+// own (they set its jab) and the heavy on top; any other's own stats are its heavy, and its jab is
+// made from them. `jab` blocks adjust a jab. Holding the melee button is the weapon's special.
+// The jab: damage (a share of the weapon's, unless it has a `heavy`), push at most this, speeds.
+// A weapon's jab is drawn back `pull` px, then poked out to `poke` px past where its tip rests; the
+// whole weapon hits, not just the tip. (Fists: `reachShare` of the punch's reach.)
+export const JAB = { damageShare: 0.5, knockback: 120, knockbackGrowth: 1, startup: 0.04, active: 0.07, recovery: 0.1, heavyRecovery: 0.14, reachShare: 0.85, radius: 9, lunge: 40, poke: 5, pull: 6 };
+// (What a jab keeps of its weapon: on-hit quirks that suit a poke.)
+const JAB_KEEPS = ['name', 'weight', 'hitSound', 'backstab', 'slippery', 'yoink', 'bleed', 'deflect'];
+function makeJab(m, length) {
+  const base = Object.fromEntries(JAB_KEEPS.filter((k) => m[k] !== undefined).map((k) => [k, m[k]]));
+  const radius = Math.min(m.radius || JAB.radius, JAB.radius);
+  // (A weapon pokes out past its tip; a thrust weapon's jab never outreaches its own thrust.)
+  const poke = length && Math.min(m.thrust ? m.reach : Infinity, SWING_HAND + length - radius * 0.5 + JAB.poke);
+  return {
+    ...base,
+    jab: true,
+    thrust: true,
+    arc: 0,
+    damage: m.heavy ? m.damage : Math.round(m.damage * JAB.damageShare * 10) / 10,
+    knockback: Math.min(m.knockback || JAB.knockback, JAB.knockback),
+    knockbackGrowth: Math.min(m.knockbackGrowth || JAB.knockbackGrowth, JAB.knockbackGrowth),
+    startup: JAB.startup,
+    active: JAB.active,
+    recovery: m.weight === 'heavy' ? JAB.heavyRecovery : JAB.recovery,
+    reach: poke || Math.max(12, (m.reach || 14) * JAB.reachShare),
+    ...(poke ? { length, travel: JAB.poke + JAB.pull } : {}),
+    radius,
+    lunge: JAB.lunge,
+    ...m.jab,
+  };
+}
+for (const [key, m] of [['fists', STRIKE], ...Object.entries(MELEE)]) {
+  m.heavyStats = m.heavy ? { ...m, ...m.heavy, heavy: null } : m;
+  m.jabStats = makeJab(m, MELEE_POINTS[key]?.length);
+}
 
 // Pickups (melee weapons, guns, grenades) inside the storm's deep-red wall are destroyed (freeing
 // their slot).
@@ -521,6 +570,12 @@ export const DOOR = {
   reach: 8, // how close to the doorway's center you need to be
 };
 
+// Low cover. Tucked behind it you hold your gun up over it and fire from there, but not the big
+// guns (marked noCover: too big to aim over cover). It can be shot to pieces: `hpPerTile` health
+// for each tile of width; bullets, thrown things and melee hits take their damage off it,
+// explosions `blast` times theirs. Broken, it's gone for the rest of the match.
+export const COVER = { hpPerTile: 40, blast: 2, gunOver: 3 };
+
 export const BARREL = {
   w: 18,
   h: 24,
@@ -560,6 +615,29 @@ export const MOVERS = {
 // nothing). For the first `iframes` s you can't be hit
 // by bullets, melee or explosions (spikes, crushers and the storm still get you).
 export const DASH = { speed: 380, time: 0.2, iframes: 0.14, recharge: 2.5, cost: 0.5 };
+
+// Combos. A melee hit that lands lets you cut the rest of that swing short with a jump or a dash
+// (cancel), gives back your air jump, and makes your next dash free (within `freeDash` s); a swing
+// that hits recovers in `recoveryOnHit` of its recovery. Staleness: within one combo (until the
+// victim gets out of hitstun), each repeat of the same attack on them pushes and stuns `stale`
+// less, down to `staleMin` of the full amount.
+// A jab, heavy or shot pressed mid-swing is remembered for `buffer` s and comes out as soon as it
+// can; a heavy cuts a jab's recovery short (so jab, heavy flows about as fast as jab, jab), and so
+// does a shot (a jab's, or a heavy's that hit).
+export const COMBO = { recoveryOnHit: 0.5, freeDash: 1.5, stale: 0.15, staleMin: 0.4, buffer: 0.2 };
+
+// Bodies bump: you can't walk through someone, unless you keep walking into them for `passAfter` s
+// (then you slip past), or dash (dashes go straight through). Two people standing in each other
+// (landing on someone) drift apart at `settle` px/s. Not while hidden or knocked flying.
+export const BUMP = { passAfter: 0.4, settle: 120 };
+// DI: when you're launched, the direction you hold (left/right; crouch for down, up for up)
+// bends your flight by up to `degrees`, the most when it's at right angles to the launch. Only for
+// real launches (push of at least `minPower`).
+export const DI = { degrees: 15, minPower: 150 };
+// Breaker: frozen by a special stun (the keyboard's big phrase, the lamp's doom), press block to
+// break free before the launch: it costs `cost` of the stamina bar, and pushes anyone within
+// `radius` px back (`push` px/s).
+export const BREAKER = { cost: 0.5, radius: 48, push: 220 };
 
 // Glue: floors coated in super glue. Standing on one you move at `slow` of your speed and can't
 // jump or dash: walk off it.

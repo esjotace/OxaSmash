@@ -3,12 +3,14 @@
 //   host   – same, plus remote players' inputs come in and the state goes out ~30×/s
 //   client – sends this player's input, draws the host's state slightly in the past (smooth)
 import Phaser from 'phaser';
+import { COVER_ART } from './cover.js';
 import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE } from '../sim/constants.js';
 import { createWorld, step, removeFighter, spawnWeapon, setHealthRule } from '../sim/world.js';
 import { toView } from '../sim/view.js';
 import { NEUTRAL, encodeInput } from '../sim/input.js';
 import { createBot, botInput, configureBot } from '../bots/bot.js';
 import { Controls } from './controls.js';
+import { Spectator } from './spectate.js';
 import { Renderer, CITY, CHARACTERS, makeCharacterAnims } from './render.js';
 import { settings } from './settings.js';
 import { SOUNDS } from './audio.js';
@@ -24,7 +26,9 @@ export class MatchScene extends Phaser.Scene {
   }
 
   // cfg: { mode, roster: [{ name, kind: kbm|pad0..pad3|bot|remote, level, char }], you, stocks, room, onEnd,
-  //        rules: { melee, ranged }, stormPace: off|slow|normal|fast }
+  //        rules: { melee, ranged }, stormPace: off|slow|normal|fast,
+  //        slots: (a duel, hosted) the room player each fighter is, when not everyone in the room plays }
+  // you: -1 for someone only watching (a guest spectating a duel).
   init(cfg) {
     this.cfg = cfg;
     this.menuOpen = false; // the in-game menu is up (the mouse is free, a local match is paused)
@@ -40,7 +44,7 @@ export class MatchScene extends Phaser.Scene {
 
   // Real art, where it exists (public/art/). Anything missing falls back to the greybox shapes.
   preload() {
-    for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', 'crate', 'hand', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!this.textures.exists(key)) this.load.image(key, `art/${key}.png`);
+    for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!this.textures.exists(key)) this.load.image(key, `art/${key}.png`);
     if (!this.textures.exists('village')) this.load.image('village', 'art/village/tiles.png');
     // Cloud puffs (smoke, poison, spore patches): animation strips of 64×64 frames.
     // Controller button pictures: 16×16 frames (see padicons.js).
@@ -82,6 +86,9 @@ export class MatchScene extends Phaser.Scene {
     const locals = roster.map((p, i) => (isLocal(p) ? i : -1)).filter((i) => i >= 0);
     makeCharacterAnims(this);
     this.draw = new Renderer(this, roster, you, locals, locals.length === 1 && roster[locals[0]].kind === 'kbm', stage);
+    // (Watching, or once out: the spectator camera's own keys.)
+    this.spectator = new Spectator(this.game.canvas);
+    this.draw.spectator = this.spectator;
     this.makeControls();
     this.applySettings();
 
@@ -102,10 +109,13 @@ export class MatchScene extends Phaser.Scene {
       }
       this.remote = roster.map(() => NEUTRAL);
       if (mode === 'host') {
-        room.on('input', (i, input) => (this.remote[i] = input));
-        room.on('leave', (i) => this.leavers.push(i));
+        // (Room players to fighters: the same, unless only some of the room plays, a duel.)
+        const slots = this.cfg.slots;
+        const fighter = (r) => (slots ? slots.indexOf(r) : r);
+        room.on('input', (r, input) => fighter(r) >= 0 && (this.remote[fighter(r)] = input));
+        room.on('leave', (r) => fighter(r) >= 0 && this.leavers.push(fighter(r)));
         // A guest picked another character: show it, and pass it on to everyone (in the snaps).
-        room.on('char', (i, char) => this.draw.setChar(i, char));
+        room.on('char', (r, char) => fighter(r) >= 0 && this.draw.setChar(fighter(r), char));
       }
       this.view = toView(this.world);
     }
@@ -115,6 +125,7 @@ export class MatchScene extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this.input.setDefaultCursor('default');
       this.dropControls();
+      this.spectator.destroy();
       if (this.input.mouse?.locked) this.input.mouse.releasePointerLock();
       if (mode === 'client') room.on('snap', () => {});
       if (mode === 'host') room.on('input', () => {}).on('leave', () => {}).on('char', () => {});
@@ -191,6 +202,7 @@ export class MatchScene extends Phaser.Scene {
   setCharacter(char, slot = 'kbm') {
     const own = this.cfg.roster.findIndex((p) => p.kind === slot);
     const i = this.cfg.mode !== 'local' ? this.cfg.you : own >= 0 ? own : this.draw.locals[0];
+    if (i < 0) return; // (only watching)
     this.draw.setChar(i, char);
     if (this.cfg.mode === 'client') this.cfg.room.sendChar(char);
   }
@@ -226,12 +238,18 @@ export class MatchScene extends Phaser.Scene {
         if (mode === 'host') this.outbox.push(...this.world.events);
       }
       if (mode === 'host' && this.world.tick % SNAP_EVERY === 0) {
-        room.broadcast({ t: 'snap', v: { ...toView(this.world), pings: room.pings() }, e: this.outbox, c: this.draw.chars });
+        room.broadcast({ t: 'snap', v: { ...toView(this.world), pings: this.pings() }, e: this.outbox, c: this.draw.chars });
         this.outbox = [];
       }
     }
     this.view = toView(this.world);
-    if (mode === 'host') this.view.pings = room.pings();
+    if (mode === 'host') this.view.pings = this.pings();
+  }
+
+  // Each fighter's ping (see HostRoom.pings), in fighter order.
+  pings() {
+    const all = this.cfg.room.pings();
+    return this.cfg.slots ? this.cfg.slots.map((r) => all[r] ?? null) : all;
   }
 
   inputFor(i) {
@@ -255,9 +273,10 @@ export class MatchScene extends Phaser.Scene {
 
   updateClient(time) {
     const { you, room } = this.cfg;
-    const input = this.menuOpen ? this.controls[you].idle() : this.controls[you].read(this.view?.fighters[you]);
-    const packed = JSON.stringify(encodeInput(input));
-    if (packed !== this.lastSent || time - this.lastSentAt > RESEND_MS) {
+    // (Only watching: nothing to send.)
+    const input = you < 0 ? null : this.menuOpen ? this.controls[you].idle() : this.controls[you].read(this.view?.fighters[you]);
+    const packed = input && JSON.stringify(encodeInput(input));
+    if (input && (packed !== this.lastSent || time - this.lastSentAt > RESEND_MS)) {
       room.sendInput(input);
       this.lastSent = packed;
       this.lastSentAt = time;

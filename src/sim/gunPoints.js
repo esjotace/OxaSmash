@@ -10,7 +10,6 @@ export const GUN_POINTS = {
   shotgun: { grip: [12.9, 9], muzzle: [43, 3.0], size: [43, 11] },
   sniper: { grip: [11, 7], muzzle: [37, 4.0], size: [37, 9] },
   rocket: { grip: [13.2, 10], muzzle: [44, 6.0], size: [44, 12] },
-  blaster: { grip: [8.4, 7], muzzle: [28, 4.0], size: [28, 8] },
   golden: { grip: [5.4, 3], muzzle: [18, 1.0], size: [18, 9] },
   railgun: { grip: [9.0, 8], muzzle: [30, 3.5], size: [30, 8] },
   money: { grip: [13.2, 10], muzzle: [44, 2.0], size: [44, 10] },

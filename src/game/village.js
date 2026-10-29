@@ -86,10 +86,6 @@ export function buildVillage(scene, st) {
     if (!VILLAGE_LOOKS.has(b.look)) continue;
     const cols = b.w / TILE;
     const rows = b.h / TILE;
-    if (b.look === 'logs') {
-      for (let c = 0; c < cols; c += 2) out.push(piece(scene, 'logs', b.x + c * TILE, b.y));
-      continue;
-    }
     if (b.look === 'wood') {
       for (let c = 0; c < cols; c += 4) {
         const img = piece(scene, 'plank', b.x + c * TILE, b.y - 2);

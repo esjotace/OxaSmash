@@ -4,11 +4,12 @@
 import Phaser from 'phaser';
 import { GUN_POINTS } from '../sim/gunPoints.js';
 import { STRIKE, MELEE, PISTOL, GUNS, GRENADES, DASH, DOOR, VIEW_W, VIEW_H, TILE, SPIKES, BARREL, TILTED_GUNS, FOOTHOLD, HEADSHOT, FIGHTER } from '../sim/constants.js';
-import { swingAngle, gunOrigin, aimOrigin, spreadOf, throwOf, thrustReach, weaponOf, spinBall, swingPoints, swingPoint, bodyHeight } from '../sim/world.js';
+import { swingAngle, gunOrigin, aimOrigin, spreadOf, throwOf, thrustReach, weaponOf, spinBall, swingPoints, bodyHeight } from '../sim/world.js';
 import { MELEE_POINTS } from '../sim/meleePoints.js';
 import { drawDosText, wrap, LINE, lineWidth } from './dosfont.js';
 import { iconFrame } from './padicons.js';
 import { buildVillage, isVillage, VILLAGE_LOOKS } from './village.js';
+import { buildCovers, updateCovers } from './cover.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
 import { PLAYER_COLORS, FONT } from './palette.js';
@@ -53,6 +54,11 @@ export class Renderer {
     this.roster = roster;
     this.you = you;
     this.locals = locals.length ? locals : roster.map((_, i) => i);
+    // Watching (nobody on this screen in the match, or all of them out): the spectator camera.
+    // spectator: its input (see spectate.js), set by the match.
+    this.ownLocals = locals;
+    this.spectator = null;
+    this.spec = { target: -1, last: -1, free: false, zoom: 1, x: 0, y: 0, on: false };
     this.mouseLook = mouseLook;
     // The canvas is drawn at a multiple of the 640×360 view (see RENDER_SCALE in game.js); both
     // cameras zoom by it, and text is drawn at it.
@@ -83,15 +89,17 @@ export class Renderer {
     this.hud = scene.add.layer();
     const art = (key) => scene.textures.exists(key) && key;
     const layers = [];
+    // (Cover is drawn on its own, so it can break: see cover.js.)
+    const fixed = { ...this.st, blocks: this.st.blocks.filter((b) => !b.cover) };
     const kitFacades = new Set();
     if (isDungeon(this.st) && art('dungeon')) {
       // The dungeon dresses itself from its tileset (src/game/dungeon.js).
-      layers.push(...buildDungeon(scene, this.st));
+      layers.push(...buildDungeon(scene, fixed));
       this.moverArt = buildMovers(scene, this.st);
       layers.push(...this.moverArt.map((m) => m.box));
     } else if (isVillage(this.st) && art('village')) {
       // The village dresses itself from its tileset (src/game/village.js).
-      layers.push(...buildVillage(scene, this.st));
+      layers.push(...buildVillage(scene, fixed));
     } else {
       const sky = scene.add.graphics();
       const back = scene.add.graphics();
@@ -114,9 +122,10 @@ export class Renderer {
       }
     }
     const blocks = scene.add.graphics();
-    drawBlocks(blocks, this.st, !!art('crate'), kitFacades);
+    drawBlocks(blocks, fixed, kitFacades);
     layers.push(blocks);
-    if (art('crate')) for (const b of this.st.blocks) if (b.look === 'crate') layers.push(scene.add.image(b.x, b.y, 'crate').setOrigin(0, 0).setDisplaySize(b.w, b.h));
+    this.covers = buildCovers(scene, this.st);
+    for (const c of this.covers) layers.push(...c.parts);
     this.barrelImages = art('barrel') ? this.st.barrels.map((b) => scene.add.image(b.x, b.y + 1, 'barrel').setOrigin(0.5, 1)) : null;
     if (this.barrelImages) layers.push(...this.barrelImages);
     // Character sprites (Pixel Crawler by Anokolisa): one per player slot, cycling the cast.
@@ -187,7 +196,8 @@ export class Renderer {
     this.banner = scene.add
       .text(VIEW_W / 2, VIEW_H * 0.36, '', { fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffffff', stroke: '#0b0d18', strokeThickness: 8, resolution: this.res })
       .setOrigin(0.5);
-    this.hud.add([this.hudG, ...this.panels.flatMap((p) => [p.name, p.damage, p.ammo, p.melee, p.ms, p.gunIcon, p.meleeIcon, ...p.nades]), this.stormText, this.banner]);
+    this.specText = scene.add.text(VIEW_W / 2, 26, '', { fontFamily: FONT, fontSize: '9px', fontStyle: 'bold', color: '#d9dcf2', align: 'center', stroke: '#0b0d18', strokeThickness: 3, resolution: this.res }).setOrigin(0.5, 0);
+    this.hud.add([this.hudG, ...this.panels.flatMap((p) => [p.name, p.damage, p.ammo, p.melee, p.ms, p.gunIcon, p.meleeIcon, ...p.nades]), this.stormText, this.banner, this.specText]);
 
     const cam = scene.cameras.main;
     const b = this.st.camera;
@@ -348,6 +358,12 @@ export class Renderer {
         case 'irradiated':
           this.addWord({ x: e.x, y: e.y, text: { haste: 'FAST', iron: 'IRON', feather: 'FLOATY', jinx: 'JINXED', slip: 'SLIPPERY', burn: 'ON FIRE', homing: 'HOMING' }[e.effect] ?? '???', scale: 0 });
           break;
+        case 'break':
+          this.burst(e.x, e.y, 0, 0, 22, 200, 0xffffff, 0);
+          this.rings.push({ x: e.x, y: e.y, r: 6, life: 0.3 });
+          this.addWord({ x: e.x, y: e.y - 18, text: 'BREAK!', scale: 0 });
+          this.shake(0.3);
+          break;
         case 'plant':
           this.burst(e.x, e.y + 16, 0, -1, 20, 140, PLAYER_COLORS[e.id]?.hex ?? 0xffffff, 120, 1.3);
           this.addWord({ x: e.x, y: e.y - 20, text: 'MELEE ONLY', scale: 0 });
@@ -453,6 +469,16 @@ export class Renderer {
           this.burst(e.x, e.y, 0, 0, 10, 160, C('#bff4ff'), 0);
           this.rings.push({ x: e.x, y: e.y, r: 3, life: 0.15 });
           break;
+        case 'coverbreak':
+          // Cover shot to pieces: splinters, and a cloud of dust where it stood.
+          this.burst(e.x, e.y, 0, -1, 26, 170, C('#8a5a34'), 260, 1.6);
+          this.burst(e.x, e.y, 0, -1, 10, 120, C('#c9c2b0'), 0, 2);
+          for (let k = 0; k < 6; k++) this.dust(e.x + ((k + 0.5) / 6 - 0.5) * e.w * 1.2, e.y + 4 - Math.random() * 8, 0.45 + Math.random() * 0.2);
+          this.shake(0.25);
+          break;
+        case 'toobig':
+          this.addWord({ x: e.x, y: e.y - 8, text: 'TOO BIG FOR COVER', scale: 0 });
+          break;
         case 'destroyed':
           this.burst(e.x, e.y - 6, 0, -1, 12, 90, C('#ff4d80'), -20, 1.4);
           break;
@@ -546,7 +572,7 @@ export class Renderer {
         this.pickupImgs.set(p.id, img);
       }
       const bob = Math.round(Math.sin(this.anim * 4 + p.id) * 2);
-      img.setPosition(p.x, p.y - 6 + bob);
+      img.setPosition(p.x, p.y - 6 + bob).setVisible(!(p.blink && Math.floor(this.anim * 8) % 2 === 0));
       const pulse = 0.35 + 0.25 * Math.sin(this.anim * 6 + p.id);
       this.g.lineStyle(1, 0xffffff, pulse).strokeEllipse(p.x, p.y - 2, 24, 6);
       const near = this.locals.find((i) => {
@@ -715,10 +741,10 @@ export class Renderer {
       const s = f.swing;
       if (s) {
         // (The rules' own swing, rebuilt from the snapshot.)
-        const m = weaponOf(s.w, s.alt);
+        const m = weaponOf(s.w, s.jab ? 'jab' : 'heavy');
         const live = { ...f, swingX: s.x, swingY: s.y, swing: s.t };
         const hitting = s.t >= m.startup && s.t < m.startup + m.active;
-        const area = m.thrust ? [swingPoint(live, m)] : swingPoints(live, m);
+        const area = swingPoints(live, m);
         for (const c of area) {
           g.lineStyle(1, 0xff3b3b, hitting ? 1 : 0.35).strokeCircle(c.x, c.y, m.radius);
           if (hitting) g.fillStyle(0xff3b3b, 0.25).fillCircle(c.x, c.y, m.radius);
@@ -917,6 +943,14 @@ export class Renderer {
     }
   }
 
+  // A puff of dust (the smoke strip, tinted dusty), size: its scale.
+  dust(x, y, size) {
+    if (!this.scene.textures.exists('fx-smoke')) return this.burst(x, y, 0, -1, 4, 40, C('#b8a58a'), 0, 1.4);
+    const img = this.scene.add.sprite(x, y, 'fx-smoke', 0).setScale(size).setTint(0xb8a58a).setAlpha(0.85).setFlipX(Math.random() < 0.5);
+    this.world.add(img);
+    this.puffs.push({ img, age: 0, frames: this.scene.textures.get('fx-smoke').frameTotal - 1, fps: 14 });
+  }
+
   // Each cloud keeps spawning puffs (animated strips that swell and dissolve) at random spots in it,
   // so it churns; when a cloud is gone its last puffs play out.
   updatePuffs(view, dt) {
@@ -1003,6 +1037,7 @@ export class Renderer {
     } else {
       view.barrels.forEach((state, i) => state && drawBarrel(this.g, this.st.barrels[i], state === 2));
     }
+    updateCovers(this.covers, view, this.g, dt, (x, y, size) => this.dust(x, y, size));
     if (this.moverArt && view.movers) {
       view.movers.forEach((m, i) => this.moverArt[i]?.update(m, this.anim));
     }
@@ -1026,13 +1061,61 @@ export class Renderer {
     this.drawHud(view, dt);
   }
 
+  // The spectator camera: following someone (←/→ to switch), or free (Space: from the whole
+  // stage, moved with the mouse or the right stick); ↑/↓ zoom, out as far as the whole stage.
+  // Returns where to look and how close: { x, y, zoom }.
+  spectate(view, dt, input) {
+    const s = this.spec;
+    const b = this.st.camera;
+    const fitStage = Math.min(VIEW_W / (b.right - b.left), VIEW_H / (b.bottom - b.top));
+    const inGame = view.fighters.map((f, i) => (f && f.state !== 'out' ? i : -1)).filter((i) => i >= 0);
+    if (!s.on) {
+      // (Just started watching: follow whoever's still in, starting with the next one along.)
+      Object.assign(s, { on: true, free: false, zoom: 1 });
+      s.target = inGame.find((i) => i > (this.ownLocals[0] ?? -1)) ?? inGame[0] ?? -1;
+    }
+    if (input.toggle) {
+      if (s.free) s.free = false;
+      else Object.assign(s, { free: true, x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2, zoom: fitStage, last: s.target });
+    } else if (input.cycle && s.free) {
+      s.free = false; // (back to whoever was followed)
+    } else if (input.cycle && inGame.length) {
+      const k = inGame.indexOf(s.target);
+      s.target = inGame[(((k < 0 ? 0 : k + input.cycle) % inGame.length) + inGame.length) % inGame.length];
+    }
+    if (!s.free && !inGame.includes(s.target)) s.target = inGame[0] ?? -1;
+    if (!s.free) s.last = s.target;
+    s.zoom = Math.max(fitStage, Math.min(2, s.zoom * Math.exp(input.zoom * 1.6 * dt)));
+    const f = view.fighters[s.target];
+    if (s.free) {
+      // (Screens' worth per second: the stick, or the mouse; captured, the mouse moves it directly.)
+      const speed = input.pan.raw ? VIEW_W / s.zoom : (VIEW_W / s.zoom) * 1.2 * dt;
+      s.x = Math.max(b.left, Math.min(b.right, s.x + input.pan.x * speed));
+      s.y = Math.max(b.top, Math.min(b.bottom, s.y + input.pan.y * speed));
+    } else if (f) Object.assign(s, { x: f.x, y: f.y - 30 });
+    const who = !s.free && s.target >= 0 ? this.roster[s.target]?.name ?? '' : '';
+    const hint = `←/→ ${s.free ? 'follow' : 'switch'} · SPACE ${s.free ? 'follow' : 'free camera'} · ↑/↓ zoom`;
+    this.specText.setText(`${s.free ? 'FREE CAMERA' : `WATCHING ${who.toUpperCase()}`}\n${hint}`).setVisible(true);
+    return { x: s.x, y: s.y, zoom: s.zoom };
+  }
+
   updateCamera(view, dt) {
     const cam = this.scene.cameras.main;
     const alive = this.locals.map((i) => view.fighters[i]).filter((f) => f && f.state === 'ok');
     let gx = cam.midPoint.x;
     let gy = cam.midPoint.y;
     let zoom = cam.zoom / this.res;
-    if (alive.length === 1) {
+    // Watching: nobody on this screen is in the match (any more).
+    const input = this.spectator?.poll();
+    const watching = !!input && (!this.ownLocals.length || this.ownLocals.every((i) => view.fighters[i]?.state === 'out'));
+    if (this.spectator) this.spectator.active = watching;
+    if (watching) {
+      ({ x: gx, y: gy, zoom } = this.spectate(view, dt, input));
+    } else {
+      this.spec.on = false;
+      this.specText.setVisible(false);
+    }
+    if (!watching && alive.length === 1) {
       gx = alive[0].x;
       gy = alive[0].y - 30;
       // The camera leans toward where you aim: the mouse cursor, or a controller's aim.
@@ -1046,7 +1129,7 @@ export class Renderer {
         gy += (p.y / this.res - VIEW_H / 2) * 0.3;
       }
       zoom = 1;
-    } else if (alive.length > 1) {
+    } else if (!watching && alive.length > 1) {
       // Several players on one screen: frame them all, zooming out as they spread apart.
       const xs = alive.map((f) => f.x);
       const ys = alive.map((f) => f.y - 30);
@@ -1287,18 +1370,18 @@ export class Renderer {
       let angle = ang;
       let dist = PISTOL.holdDistance;
       let lift = 0;
-      const m = swinging === key ? weaponOf(key, f.swing.alt) : MELEE[key];
+      const m = swinging === key ? weaponOf(key, f.swing.jab ? 'jab' : 'heavy') : MELEE[key].heavyStats;
       const spinning = key === f.melee && m.spin && f.holding !== null && f.holding >= m.spin.after;
       if (swinging === key && m.thrust) {
-        // A thrust: jabbed straight out along the aim, the tip right on the hit area as it travels
-        // out (see thrustReach), then pulled back.
+        // A thrust: drawn back in the wind-up, then shot straight out along the aim, the tip right on
+        // the hit area as it travels out (see thrustReach), then brought home.
         const s = f.swing;
         const tip = MELEE_POINTS[key]?.length ?? img.frame.width * (1 - 0.12); // from the hand to the tip of the sprite
         const rest = 2 + tip - m.radius * 0.5; // the tip with the trident held normally
         const k = (v) => Math.max(0, Math.min(1, v));
-        // Jabbed out during the wind-up, pulled back in while hitting (thrustReach), then home.
+        const back = m.reach - (m.travel ?? m.reach * 0.6);
         const tipReach =
-          s.t < m.startup ? rest + (m.reach - rest) * k(s.t / m.startup) : s.t < m.startup + m.active ? thrustReach(m, s.t) : m.reach * 0.4 + (rest - m.reach * 0.4) * k((s.t - m.startup - m.active) / m.recovery);
+          s.t < m.startup ? rest + (back - rest) * k(s.t / m.startup) : s.t < m.startup + m.active ? thrustReach(m, s.t) : m.reach + (rest - m.reach) * k((s.t - m.startup - m.active) / m.recovery);
         angle = Math.atan2(s.y, s.x);
         dist = tipReach + m.radius * 0.5 - tip;
       } else if (swinging === key) {
@@ -1447,7 +1530,7 @@ export class Renderer {
         for (const h of this.handImgs[i]) h.setTint(f.blocking ? 0xcfe3ff : 0xffffff).setTintMode(Phaser.TintModes.FILL).setAlpha(f.blocking ? 1 : 0.6);
       }
     }
-    this.drawSpeedLines(f, i, swinging ? weaponOf(swinging, f.swing.alt) : STRIKE, ox, oy, dt);
+    this.drawSpeedLines(f, i, swinging !== undefined ? weaponOf(swinging, f.swing.jab ? 'jab' : 'heavy') : STRIKE, ox, oy, dt);
     // Slapped with the fish: dripping wet. Ate a carrot: little orange speed streaks.
     if (f.slipping && Math.random() < 0.3) this.particles.push({ x: x + (Math.random() * 2 - 1) * 6, y: y - 6 - Math.random() * 22, vx: 0, vy: 20, life: 0.4, color: C('#7fc8ff'), g: 300, s: 1 });
     if (f.hasted && Math.abs(f.walk) > 0 && Math.random() < 0.5) this.particles.push({ x: x - fc * 6, y: y - 4 - Math.random() * 22, vx: -fc * 60, vy: 0, life: 0.2, color: C('#ff9a3c'), g: 0, s: 1 });
@@ -1874,13 +1957,13 @@ function buildFacadeColumns(scene, kit, fa) {
   return [...out, ...lights];
 }
 
-function drawBlocks(g, st, crateArt, kitFacades = new Set()) {
+function drawBlocks(g, st, kitFacades = new Set()) {
   for (const fa of st.facades ?? []) drawFacade(g, fa, kitFacades.has(fa));
   for (const d of st.doors) drawDoor(g, d);
   for (const b of st.blocks) if (b.look === 'scaffold') drawScaffold(g, st, b);
   for (const b of st.blocks) {
     const { x, y, w, h } = b;
-    if ((b.look === 'crate' && crateArt) || VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look)) continue;
+    if (VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look)) continue;
     if (b.look === 'balcony') {
       // Metal balcony: a railing behind you, the floor, and brackets under it.
       g.fillStyle(C('#4a5570'), 1).fillRect(x, y - 12, w, 2);
@@ -1899,10 +1982,6 @@ function drawBlocks(g, st, crateArt, kitFacades = new Set()) {
       g.fillStyle(C('#4b5275'), 1).fillRect(x, y + 4, w, 2);
       g.fillStyle(C('#3a4062'), 1);
       for (let sx = x + 6; sx < x + w; sx += 16) g.fillRect(sx, y + 4, 2, 6);
-    } else if (b.look === 'crate') {
-      g.fillStyle(C('#6b4a2e'), 1).fillRect(x, y, w, h);
-      g.lineStyle(2, C('#3d2a1a'), 1).strokeRect(x + 1, y + 1, w - 2, h - 2).lineBetween(x + 2, y + 2, x + w - 2, y + h - 2);
-      g.fillStyle(C('#8c6440'), 1).fillRect(x, y, w, 3);
     } else if (b.look === 'metal') {
       g.fillStyle(C('#39405e'), 1).fillRect(x, y, w, h);
       g.fillStyle(C('#6c769e'), 1).fillRect(x, y, w, 3);

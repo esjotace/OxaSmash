@@ -34,7 +34,10 @@
               <label class="field small">Bots <select id="botCount"><option>1</option><option selected>2</option><option>3</option></select></label>
               <label class="field small">Level <select id="botLevel"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
             </div>
-            <button id="playBots" class="btn primary">Play</button>
+            <div class="row">
+              <button id="playBots" class="btn primary">Play</button>
+              <button id="botMatch" class="btn ghost" title="Set up a match between bots and watch it">Bot match</button>
+            </div>
           </section>
           <section class="mode">
             <h2>Training</h2>
@@ -102,6 +105,24 @@
           <button id="leaveRoom" class="btn ghost">Leave room</button>
         </div>
         <p id="lobbyStatus" class="status" role="status"></p>
+      </div>
+    </main>
+
+    <!-- Solo: a match between bots, to watch (each bot's level, then the same rules as a room). -->
+    <main id="botLobby" class="screen" hidden>
+      <div class="panel narrow">
+        <h2>Bot match</h2>
+        <p class="hint">Set up the bots and watch them fight. ←/→ switch who the camera follows, Space for a free camera, ↑/↓ zoom.</p>
+        <ol id="botList" class="players"></ol>
+        <div class="row">
+          <button id="botAdd" class="btn small">Add bot</button>
+          <button id="botRulesBtn" class="btn small ghost">Rules</button>
+        </div>
+        <p id="botRules" class="muted"></p>
+        <div class="row">
+          <button id="botStart" class="btn primary">Watch</button>
+          <button id="botBack" class="btn ghost">Back</button>
+        </div>
       </div>
     </main>
 
@@ -185,11 +206,45 @@
         <h2 id="winner" class="winner"></h2>
         <p id="seriesLine" class="muted" hidden></p>
         <ol id="scores" class="players"></ol>
+        <!-- Online: honor duels (see src/net/duels.js). -->
+        <section id="duelBoard" class="duel-board" hidden>
+          <div class="row">
+            <button id="duelBtn" class="btn duel-btn">DUEL</button>
+            <button id="duelWatch" class="btn small ghost">Spectate duels</button>
+            <label class="check"><input id="duelAuto" type="checkbox" checked /> Auto-spectate</label>
+            <button id="duelNow" class="btn small ghost" hidden>Start duels now</button>
+          </div>
+          <p id="duelPhase" class="duel-phase"></p>
+          <ul id="duelInbox" class="players"></ul>
+          <ul id="duelList" class="players"></ul>
+        </section>
         <div class="row">
           <button id="again" class="btn primary">Play again</button>
           <button id="toMenu" class="btn ghost">Menu</button>
         </div>
         <p id="resultsStatus" class="status" role="status"></p>
+      </div>
+    </main>
+
+    <!-- Honor duels: who to challenge. -->
+    <div id="duelPick" class="game-menu" hidden>
+      <div class="panel narrow" role="dialog" aria-label="Challenge to a duel">
+        <p class="eyebrow">Honor duel</p>
+        <h2>Who do you challenge?</h2>
+        <ul id="duelFoes" class="players"></ul>
+        <p id="duelFoesNone" class="muted" hidden>Nobody's free to duel right now.</p>
+        <div class="row"><button id="duelPickClose" class="btn ghost">Cancel</button></div>
+      </div>
+    </div>
+
+    <!-- Honor duels: the rules for the next duel (both duellers pick; Crowd's Choice: the spectators vote). -->
+    <main id="duelRules" class="screen" hidden>
+      <div class="panel narrow">
+        <p class="eyebrow" id="duelCount">Honor duel</p>
+        <h2 id="duelTitle" class="winner"></h2>
+        <p id="duelInfo" class="muted"></p>
+        <div id="duelModes" class="duel-modes"></div>
+        <p id="duelStatus" class="status" role="status"></p>
       </div>
     </main>
 

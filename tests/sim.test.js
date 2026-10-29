@@ -1,8 +1,8 @@
 // Same checks as the Godot build's tests/run_tests.gd, so both versions follow the same rules.
 import { describe, it, expect } from 'vitest';
-import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule } from '../src/sim/world.js';
+import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin } from '../src/sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../src/sim/input.js';
-import { MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE } from '../src/sim/constants.js';
+import { MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
 import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS } from '../src/sim/constants.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { STAGES, getStage } from '../src/sim/stage.js';
@@ -609,7 +609,7 @@ describe('melee weapons', () => {
     run(w, 3);
     // b fires at a; a swings when the bullet is close, aiming back at b.
     w.bullets.push({ id: 500, owner: b.id, x: 640, y: -20, vx: -300, vy: 0, gravity: 0, life: 1, thrown: false, damage: 3, kb: 30, growth: 0.6 });
-    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ep: 1, ax: 1, ay: 0, mp: t >= 3 ? 1 : 0 }, NEUTRAL]);
+    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ep: 1, ax: 1, ay: 0, kp: t >= 1 ? 1 : 0 }, NEUTRAL]);
     expect(a.damage).toBe(0);
     expect(b.damage).toBeCloseTo(3 * MELEE.katana.deflect.damageMul, 5);
   });
@@ -917,14 +917,15 @@ describe('melee quirks', () => {
     for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, input]);
   };
 
-  it('every light melee weapon stays light: no launches', () => {
-    for (const [key, m] of Object.entries(MELEE)) {
-      if (m.weight !== 'light' || m.words || m.replacesGun) continue;
-      const { w, b } = armed(key, Math.min(m.reach, 20));
+  it('every jab stays light: no launches', () => {
+    for (const [key, m] of [['fists', null], ...Object.entries(MELEE)]) {
+      if (m?.replacesGun) continue;
+      const { w, a, b } = armed(key === 'fists' ? null : key, 12);
+      if (key === 'fists') Object.assign(a, { melee: null, active: 'melee' });
       b.damage = 300;
       let fastest = 0;
       for (let t = 0; t < 30; t++) {
-        step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+        step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1 }, NEUTRAL]);
         fastest = Math.max(fastest, Math.hypot(b.vx, b.vy));
       }
       expect(fastest, key).toBeLessThanOrEqual(LIGHT_MAX_PUSH + 1);
@@ -932,10 +933,21 @@ describe('melee quirks', () => {
     }
   });
 
+  it("light blades' heavy pushes moderately (it launches at high damage)", () => {
+    const { w, b } = armed('knife', 12);
+    b.damage = 300;
+    let fastest = 0;
+    for (let t = 0; t < 30; t++) {
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+      fastest = Math.max(fastest, Math.hypot(b.vx, b.vy));
+    }
+    expect(fastest).toBeGreaterThan(LIGHT_MAX_PUSH * 2);
+  });
+
   it('every melee hit area reaches the tip of its sprite (not short of it)', () => {
     for (const [key, p] of Object.entries(MELEE_POINTS)) {
-      // (Thrusts keep their own reach; the halberd's follow-up sweep follows the art.)
-      const m = MELEE[key].sweep ?? MELEE[key];
+      // (Thrusts keep their own reach; the halberd's heavy, a sweep, follows the art.)
+      const m = MELEE[key].heavyStats;
       if (m.thrust) continue;
       expect(m.reach + m.radius * 0.5, key).toBeCloseTo(SWING_HAND + p.length, 5);
     }
@@ -944,7 +956,7 @@ describe('melee quirks', () => {
   it('the katana hits where its blade is drawn, out to the tip', () => {
     const { w, b } = armed('katana', 30, -1);
     for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
-    expect(b.damage).toBe(MELEE.katana.damage);
+    expect(b.damage).toBe(MELEE.katana.heavyStats.damage);
   });
 
   it('the knife backstab pushes (a light weapon otherwise never does much)', () => {
@@ -978,8 +990,8 @@ describe('melee quirks', () => {
     swing(front.w);
     const back = armed('knife', 10, 1);
     swing(back.w);
-    expect(front.b.damage).toBe(MELEE.knife.damage);
-    expect(back.b.damage).toBe(MELEE.knife.damage * MELEE.knife.backstab.damageMul);
+    expect(front.b.damage).toBe(MELEE.knife.heavyStats.damage);
+    expect(back.b.damage).toBe(MELEE.knife.heavyStats.damage * MELEE.knife.backstab.damageMul);
   });
 
   // The trident goes in the gun slot.
@@ -1068,7 +1080,7 @@ describe('melee quirks', () => {
     const { w, a } = armed('machete', 14);
     hold(w, Math.floor(LIGHT_THROW.holdToThrow * 60) - 3);
     expect(a.melee).toBe('machete');
-    expect(w.fighters[1].damage).toBe(MELEE.machete.damage);
+    expect(w.fighters[1].damage).toBe(MELEE.machete.heavyStats.damage);
   });
 
   it('light weapons: hold to throw, with a real push; it lands as a pickup to go get back', () => {
@@ -1129,15 +1141,15 @@ describe('melee quirks', () => {
       place(b, 614, b.y);
       Object.assign(b, { vx: 0, vy: 0, hitstun: 0 });
     }
-    expect(pushes[0]).toBeLessThanOrEqual(LIGHT_MAX_PUSH + 1);
-    expect(pushes[1]).toBeLessThanOrEqual(LIGHT_MAX_PUSH + 1);
-    expect(pushes[2]).toBeGreaterThan(LIGHT_MAX_PUSH * 1.5);
+    // (The heavy pushes moderately; the third in a row launches harder.)
+    expect(pushes[2]).toBeGreaterThan(pushes[0] * 1.2);
   });
 
   it('the nodachi: hold to charge a dash slash that launches; a tap is a normal light slash', () => {
     const tap = armed('nodachi', 20);
     tap.b.damage = 100;
-    expect(hold(tap.w, 2)).toBeLessThanOrEqual(LIGHT_MAX_PUSH + 1);
+    const c = MELEE.nodachi.charge.launch;
+    expect(hold(tap.w, 2)).toBeLessThan(c.knockback + c.knockbackGrowth * 100);
     const charged = armed('nodachi', 60);
     charged.b.damage = 100;
     let dash = 0;
@@ -1674,14 +1686,14 @@ describe('random stages', () => {
 
 describe('input over the network', () => {
   it('round-trips', () => {
-    const input = { mx: -1, down: true, jump: false, crouch: true, shoot: true, block: true, meleeHeld: true, grenadeHeld: true, jp: 3, sp: 255, mp: 0, dp: 9, rp: 4, hp: 7, ep: 2, gp: 5, xp: 6, cp: 8, ax: 0.71, ay: -0.71 };
+    const input = { mx: -1, down: true, up: true, jump: false, crouch: true, shoot: true, block: true, meleeHeld: true, grenadeHeld: true, jp: 3, sp: 255, mp: 0, dp: 9, rp: 4, hp: 7, ep: 2, gp: 5, xp: 6, cp: 8, kp: 4, ax: 0.71, ay: -0.71 };
     expect(decodeInput(encodeInput(input))).toEqual(input);
   });
 
   it('rejects or clamps garbage', () => {
     expect(decodeInput('hi')).toBeNull();
     expect(decodeInput([1, 2, 3])).toBeNull();
-    const d = decodeInput([99, 'x', -5, 1e9, NaN, 2, 3, 500, -500, 0, 0, 999, 7, 1]);
+    const d = decodeInput([99, 'x', -5, 1e9, NaN, 2, 3, 500, -500, 0, 0, 999, 7, 1, 2]);
     expect(d.mx).toBe(1);
     expect(d.sp).toBe(255);
     expect(d.mp).toBe(0);
@@ -1695,13 +1707,14 @@ describe('input over the network', () => {
 describe.skipIf(!process.env.BOT_TESTS)('whole match', () => {
   // Bots still occasionally end up in a standoff across a solid floor, so this checks that
   // matches between bots fight and nearly always finish, rather than that every one does.
-  it('four bots with the storm fight and almost always finish', () => {
+  it('four bots with the storm fight and almost always finish (random dungeons, and training)', () => {
     const seeds = 10;
     let finished = 0;
     let hits = 0;
     let kos = 0;
     for (let seed = 1; seed <= seeds; seed++) {
-      const w = createWorld({ stage: 'warehouse', players: 4, stocks: 2, countdown: 0, seed, storm: { startDelay: 20, firstShrink: 20, hold: 10, finalShrink: 15 } });
+      const stage = seed === seeds ? 'training' : `mixed-${1000 + seed * 7919}`;
+      const w = createWorld({ stage, players: 4, stocks: 2, countdown: 0, seed, storm: { startDelay: 20, firstShrink: 20, hold: 10, finalShrink: 15 } });
       const bots = ['hard', 'hard', 'normal', 'easy'].map((l, i) => createBot(l, seed * 10 + i));
       for (let t = 0; t < 60 * 300 && w.phase !== 'over'; t++) {
         step(w, bots.map((b, i) => botInput(w, i, b)));
@@ -1754,9 +1767,9 @@ describe('kitchen, farm and toolbox weapons', () => {
     swing(w, 30);
   };
 
-  it('a frying pan tap is a small push; held, it bonks', () => {
+  it("a frying pan's jab is a small push; held, it bonks", () => {
     let { w, b } = armed('pan');
-    swing(w, 30);
+    swing(w, 30, { mp: 0, kp: 1 });
     expect(b.damage).toBe(MELEE.pan.damage);
     expect(b.stunned).toBe(false);
     ({ w, b } = armed('pan'));
@@ -1773,7 +1786,8 @@ describe('kitchen, farm and toolbox weapons', () => {
     b.damage = 0;
     place(a, 600, -2);
     place(b, 614, -2);
-    run(w, 30);
+    // (Wait without touching the button: a change in its count would be a fresh press.)
+    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, mp: 1 }, NEUTRAL]);
     hold(w, 32, { mp: 2 });
     swing(w, 30, { mp: 2 });
     expect(b.damage).toBe(MELEE.ham.power.damage);
@@ -1818,24 +1832,20 @@ describe('kitchen, farm and toolbox weapons', () => {
     expect(w.pickups.some((p) => p.weapon === 'anvil')).toBe(true);
   });
 
-  it('the halberd thrusts, and attacking again sweeps', () => {
-    const { w, a, b } = armed('halberd', 40);
-    swing(w, 3);
-    expect(a.swingAlt).toBe(false);
-    swing(w, 10, { mp: 2 }); // pressed again mid-thrust: the sweep follows
-    swing(w, 30, { mp: 2 });
-    expect(b.damage).toBeGreaterThanOrEqual(MELEE.halberd.damage);
-    const before = b.damage;
-    // The sweep landed too (or at least ran): it's the follow-up's stats.
-    expect(before).toBeGreaterThan(0);
+  it("the halberd's jab is its long thrust (it reaches far), its heavy the sweep", () => {
+    let { w, a, b } = armed('halberd', 34);
+    swing(w, 30, { mp: 0, kp: 1 });
+    expect(b.damage).toBe(MELEE.halberd.jabStats.damage);
+    expect(a.swingVariant).toBe('jab');
+    ({ w, a, b } = armed('halberd', 14));
+    swing(w, 30);
+    expect(b.damage).toBe(MELEE.halberd.heavyStats.damage);
   });
 
   it('the halberd sweep reaches behind you', () => {
-    const { w, a, b } = armed('halberd', -14, 1);
-    a.followT = 0.3;
+    const { w, b } = armed('halberd', -14, 1);
     swing(w, 30);
-    expect(a.swingAlt).toBe(true);
-    expect(b.damage).toBe(MELEE.halberd.followUp.damage);
+    expect(b.damage).toBe(MELEE.halberd.heavyStats.damage);
   });
 
   it('the morning star spins while held, knocking away anyone the ball touches', () => {
@@ -1870,11 +1880,13 @@ describe('kitchen, farm and toolbox weapons', () => {
     swing(w, 20);
     expect(w.paints.length).toBe(1);
     place(b, 620, -2);
-    run(w, 3);
-    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL }, { ...NEUTRAL, mx: 1 }]);
-    expect(b.vx).toBeCloseTo(FIGHTER.runSpeed * MELEE.roller.paint.slow, 0);
+    // (a keeps the same press count: no new swing.)
+    run(w, 3, () => [{ ...NEUTRAL, mp: 1 }, NEUTRAL]);
+    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, mp: 1 }, { ...NEUTRAL, mx: 1 }]);
+    expect(b.vx).toBeCloseTo(FIGHTER.runSpeed * MELEE.roller.heavyStats.paint.slow, 0);
     place(a, 610, -2);
-    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, mx: 1 }, NEUTRAL]);
+    place(b, 1000, -2); // (out of the way: bodies bump)
+    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, mx: 1, mp: 1 }, NEUTRAL]);
     expect(a.vx).toBeCloseTo(FIGHTER.runSpeed, 0);
   });
 });
@@ -2331,10 +2343,10 @@ describe('items', () => {
     place(a, 600, -2);
     run(w, 3);
     Object.assign(a, { melee: 'roller', active: 'melee', uses: 0 });
-    for (let k = 0; k < MELEE.roller.paint.ammo + 2; k++) {
+    for (let k = 0; k < MELEE.roller.heavyStats.paint.ammo + 2; k++) {
       for (let t = 0; t < 25; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: k + 1 }, NEUTRAL]);
     }
-    expect(w.paints.length).toBe(MELEE.roller.paint.ammo);
+    expect(w.paints.length).toBe(MELEE.roller.heavyStats.paint.ammo);
   });
 });
 
@@ -2519,14 +2531,52 @@ describe('the style meter and boomerang guns', () => {
     expect(a.hasGun).toBe(false);
   });
 
-  it('a caught gun replaces whatever is in the gun slot', () => {
-    const { w, a } = duel(300);
+  // a throws an empty pistol at b (60 px away); it bounces back; a presses pick up as it arrives.
+  function throwAndCatch(w, a, press = true, before = () => {}) {
     Object.assign(a, { gun: 'pistol', hasGun: true, ammo: 0, spareMags: 0 });
-    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
-    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
-    Object.assign(a, { gun: 'shotgun', hasGun: true, ammo: 6, spareMags: 1 });
-    for (let t = 0; t < 90 && a.gun !== 'pistol'; t++) step(w, [NEUTRAL, NEUTRAL]);
+    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: -0.1, sp: 1, shoot: true }, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: -0.1, sp: 1 }, NEUTRAL]);
+    before();
+    for (let t = 0; t < 120; t++) step(w, [{ ...NEUTRAL, ep: press ? t : 0 }, NEUTRAL]);
+  }
+
+  it('the trigger catches a returning gun too', () => {
+    const { w, a } = duel(60);
+    Object.assign(a, { gun: 'pistol', hasGun: true, ammo: 0, spareMags: 0 });
+    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: -0.1, sp: 1, shoot: true }, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: -0.1, sp: 1 }, NEUTRAL]);
+    for (let t = 0; t < 120 && !a.hasGun; t++) step(w, [{ ...NEUTRAL, sp: 2 + t }, NEUTRAL]);
+    expect(a.hasGun).toBe(true);
+    expect(a.style).toBeCloseTo(STYLE.catch, 5);
+  });
+
+  it('a caught gun replaces whatever is in the gun slot', () => {
+    const { w, a } = duel(60);
+    throwAndCatch(w, a, true, () => Object.assign(a, { gun: 'shotgun', hasGun: true, ammo: 6 }));
     expect(a.gun).toBe('pistol');
+  });
+
+  it("an uncaught gun falls to the floor, and an empty one there vanishes after a while", () => {
+    const { w, a } = duel(60);
+    throwAndCatch(w, a, false);
+    expect(a.hasGun).toBe(false);
+    const p = w.pickups.find((x) => x.weapon === 'pistol');
+    expect(p?.ammo).toBe(0);
+    run(w, Math.ceil(GUN_THROW.emptyLife * 60) + 5);
+    expect(w.pickups.includes(p)).toBe(false);
+  });
+
+  it('a gun keeps its rounds on the floor; spare magazines stay with the player', () => {
+    const w = world();
+    const f = w.fighters[0];
+    place(f, 600, -2);
+    run(w, 3);
+    f.spareMags = 0;
+    w.pickups.push({ id: 99, x: 600, y: 0, weapon: 'smg', ammo: 7, t: 0 });
+    step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]);
+    expect(f.gun).toBe('smg');
+    expect(f.ammo).toBe(7);
+    expect(f.spareMags).toBe(0);
   });
 
   it('training: infinite ammo can be switched off', () => {
@@ -2538,16 +2588,296 @@ describe('the style meter and boomerang guns', () => {
     expect(f.ammo).toBe(GUNS.pistol.magazineSize - 1);
   });
 
-  it('a thrown light gun comes back, and catching it gives it back (empty) and style', () => {
-    const { w, a } = duel(300);
-    Object.assign(a, { gun: 'pistol', hasGun: true, ammo: 0, spareMags: 0 });
-    for (let t = 0; t < 30; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
-    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
-    expect(a.hasGun).toBe(false);
-    for (let t = 0; t < 90 && !a.hasGun; t++) step(w, [NEUTRAL, NEUTRAL]);
+  it('a thrown light gun bounces back off an enemy; pressing pick up catches it (empty), for style', () => {
+    const { w, a } = duel(60);
+    throwAndCatch(w, a);
     expect(a.hasGun).toBe(true);
     expect(a.gun).toBe('pistol');
     expect(a.ammo).toBe(0);
     expect(a.style).toBeCloseTo(STYLE.catch, 5);
+  });
+});
+
+describe('combos', () => {
+  // a punches b (standing 14 px away); returns the world when the punch has just landed.
+  function landed(weapon = null) {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 614, -2);
+    run(w, 5);
+    Object.assign(a, { hasGun: false, gun: null, melee: weapon, active: 'melee' });
+    b.facing = -1;
+    for (let t = 0; t < 30 && b.damage === 0; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+    return { w, a, b };
+  }
+
+  it('a hit can be cancelled into a jump, and gives a free dash', () => {
+    const { w, a } = landed('hammer');
+    expect(a.swing).toBeGreaterThanOrEqual(0);
+    expect(a.freeDash).toBeGreaterThan(0);
+    a.stamina = 0;
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, jp: 1, jump: true }, NEUTRAL]);
+    expect(a.swing).toBe(-1);
+    expect(a.vy).toBeLessThan(0);
+    // The free dash, with no stamina.
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, jp: 1, xp: 1, mx: 1 }, NEUTRAL]);
+    expect(a.dash).toBeGreaterThan(0);
+    expect(a.stamina).toBeLessThan(0.05);
+  });
+
+  it('a swing that hits recovers faster than one that misses', () => {
+    const swingTicks = (gap) => {
+      const w = world();
+      const [a, b] = w.fighters;
+      place(a, 600, -2);
+      place(b, 600 + gap, -2);
+      run(w, 5);
+      Object.assign(a, { melee: 'hammer', active: 'melee' });
+      let t = 0;
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+      while (a.swing >= 0 && t < 120) {
+        step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+        t++;
+      }
+      return t;
+    };
+    expect(swingTicks(14)).toBeLessThan(swingTicks(200));
+  });
+
+  it('the same attack again in one combo pushes less (staleness)', () => {
+    const { w, b } = landed();
+    const first = Math.hypot(b.vx, b.vy);
+    // Hit again right away (still in hitstun), same fists.
+    b.damage = 0;
+    place(b, 614, b.y);
+    const a = w.fighters[0];
+    a.swing = -1;
+    for (let t = 0; t < 30 && b.damage === 0; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 2 }, NEUTRAL]);
+    expect(b.combo.length).toBe(2);
+    expect(Math.hypot(b.vx, b.vy)).toBeLessThan(first);
+  });
+});
+
+describe('DI', () => {
+  it('holding up while launched sideways bends the flight upward; holding nothing does not', () => {
+    const launch = (held) => {
+      const w = world();
+      const [a, b] = w.fighters;
+      place(a, 600, -2);
+      place(b, 614, -2);
+      run(w, 5);
+      Object.assign(a, { melee: 'bat', active: 'melee' });
+      b.facing = -1;
+      b.damage = 80;
+      let angle = null;
+      for (let t = 0; t < 40 && angle === null; t++) {
+        step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, { ...NEUTRAL, ...held }]);
+        if (b.hitstun > 0) angle = Math.atan2(b.vy, b.vx);
+      }
+      return angle;
+    };
+    const plain = launch({});
+    const up = launch({ up: true });
+    const down = launch({ down: true });
+    expect(up).toBeLessThan(plain - 0.05);
+    expect(down).toBeGreaterThan(plain + 0.05);
+    expect(Math.abs(up - plain)).toBeLessThanOrEqual((DI.degrees * Math.PI) / 180 + 1e-6);
+  });
+});
+
+describe('the breaker', () => {
+  it('block breaks a special freeze before the launch, for half the stamina bar', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 620, -2);
+    run(w, 5);
+    a.pendingLaunch = { left: 1.5, dx: 1, dy: -1, base: 2500, growth: 0, by: 1 };
+    step(w, [NEUTRAL, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, block: true }, NEUTRAL]);
+    expect(a.pendingLaunch).toBe(null);
+    expect(a.stamina).toBeCloseTo(1 - BREAKER.cost, 1);
+    expect(b.vx).toBeGreaterThan(0);
+    run(w, 120);
+    expect(a.state).toBe('ok');
+  });
+
+  it('without enough stamina, it does nothing', () => {
+    const w = world();
+    const a = w.fighters[0];
+    place(a, 600, -2);
+    run(w, 5);
+    a.pendingLaunch = { left: 1.5, dx: 1, dy: -1, base: 0, growth: 0, by: -1 };
+    a.stamina = 0.2;
+    step(w, [{ ...NEUTRAL, block: true }]);
+    expect(a.pendingLaunch).not.toBe(null);
+  });
+});
+
+describe('bodies bump', () => {
+  // a walks right into b, standing still, for `ticks`; returns them.
+  function walkInto(ticks, extra = () => ({})) {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 560, -2);
+    place(b, 600, -2);
+    run(w, 5);
+    for (let t = 0; t < ticks; t++) step(w, [{ ...NEUTRAL, mx: 1, ...extra(t) }, NEUTRAL]);
+    return { w, a, b };
+  }
+
+  it("you can't walk through someone", () => {
+    const { a, b } = walkInto(20);
+    expect(b.x - a.x).toBeGreaterThanOrEqual(FIGHTER.w - 0.01);
+    expect(Math.abs(b.x - 600)).toBeLessThan(1);
+  });
+
+  it('keep pushing and you slip past', () => {
+    const { a, b } = walkInto(90);
+    expect(a.x).toBeGreaterThan(b.x);
+  });
+
+  it('a dash goes straight through', () => {
+    const { a, b } = walkInto(25, (t) => (t >= 15 ? { xp: 1 } : {}));
+    expect(a.x).toBeGreaterThan(b.x);
+  });
+});
+
+describe('jabs and dummies', () => {
+  it('a thrust shoots out while it hits', () => {
+    const m = MELEE.warning.jabStats;
+    expect(thrustReach(m, m.startup)).toBeLessThan(thrustReach(m, m.startup + m.active));
+    expect(thrustReach(m, m.startup + m.active)).toBeCloseTo(m.reach);
+  });
+
+  it("a training dummy that stands still doesn't attack", () => {
+    const w = world();
+    const bot = createBot('dummy', 1);
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 620, -2);
+    for (let t = 0; t < 120; t++) step(w, [NEUTRAL, botInput(w, 1, bot)]);
+    expect(a.damage).toBe(0);
+    expect(b.swing).toBe(-1);
+  });
+
+  it('the revolver is held at the same height as the 9mm', () => {
+    const w = world();
+    const f = w.fighters[0];
+    f.gun = 'pistol';
+    const pistol = gunOrigin(f).y;
+    f.gun = 'revolver';
+    expect(gunOrigin(f).y).toBe(pistol);
+  });
+});
+
+describe('jab into heavy', () => {
+  it('a heavy pressed during a jab comes out as soon as the jab has hit, about as fast as jab, jab', () => {
+    // Ticks from the first jab to the second attack starting.
+    const gap = (second) => {
+      const w = world();
+      const [a, b] = w.fighters;
+      place(a, 600, -2);
+      place(b, 900, -2);
+      run(w, 5);
+      Object.assign(a, { melee: 'hammer', active: 'melee' });
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1 }, NEUTRAL]);
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1, ...second }, NEUTRAL]);
+      // (Until a new swing starts: its clock goes back to the start.)
+      let t = 2;
+      let last = a.swing;
+      for (; t < 60; t++) {
+        step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: second.kp ?? 1, mp: second.mp ?? 0 }, NEUTRAL]);
+        if (a.swing >= 0 && a.swing < last) break;
+        last = a.swing;
+      }
+      return t;
+    };
+    const jabHeavy = gap({ mp: 1 });
+    const jabJab = gap({ kp: 2 });
+    expect(jabHeavy).toBeLessThanOrEqual(jabJab);
+  });
+});
+
+describe('cover', () => {
+  // The warehouse's left crate (x 288, 2 tiles wide); a tucked right beside it, on its right.
+  function tuckedBy(gun = 'pistol') {
+    const w = world();
+    const [a, b] = w.fighters;
+    const c = w.covers.find((o) => o.x === 288 && o.y === -TILE);
+    place(a, c.x + c.w + FIGHTER.w / 2 + 1, -2);
+    place(b, 1000, -2);
+    run(w, 5);
+    Object.assign(a, { gun, hasGun: true, ammo: GUNS[gun].magazineSize, spareMags: 1, facing: -1 });
+    step(w, [{ ...NEUTRAL, crouch: true, ax: -1, ay: 0 }, NEUTRAL]);
+    return { w, a, b, c };
+  }
+
+  it('tucked behind cover, your gun is held up over it, and shots clear it', () => {
+    const { w, a, c } = tuckedBy();
+    expect(a.tucked).toBe(true);
+    step(w, [{ ...NEUTRAL, crouch: true, ax: -1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
+    expect(w.bullets.length).toBe(1);
+    run(w, 10, () => [{ ...NEUTRAL, crouch: true, ax: -1, ay: 0, sp: 1 }, NEUTRAL]);
+    expect(c.hp).toBe(c.max);
+  });
+
+  it("the big guns can't be fired from behind cover", () => {
+    const { w, a } = tuckedBy('rocket');
+    step(w, [{ ...NEUTRAL, crouch: true, ax: -1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
+    expect(w.bullets.length).toBe(0);
+    expect(a.ammo).toBe(GUNS.rocket.magazineSize);
+  });
+
+  it('shot enough, cover breaks for good and stops being solid', () => {
+    const w = world();
+    const c = w.covers[0];
+    const shot = { owner: 1, damage: c.max / 2 + 1 };
+    for (let k = 0; k < 2; k++) {
+      w.bullets.push({ id: 900 + k, ...shot, x: c.x - 30, y: c.y + c.h / 2, vx: 900, vy: 0, gravity: 0, life: 1 });
+      run(w, 4);
+    }
+    expect(c.gone).toBe(true);
+    expect(w.live.includes(c)).toBe(false);
+    expect(w.covers.every((o) => o.gone || o.hp === o.max)).toBe(true);
+  });
+});
+
+describe('jab into a shot', () => {
+  it('a shot pressed during a jab fires as soon as the jab has hit (not after its recovery)', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 900, -2);
+    run(w, 5);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1 }, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1, sp: 1, shoot: true }, NEUTRAL]);
+    const m = STRIKE.jabStats;
+    let t = 2;
+    for (; t < 60 && w.bullets.length === 0; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, kp: 1, sp: 1 }, NEUTRAL]);
+    expect(w.bullets.length).toBe(1);
+    expect(t / 60).toBeLessThan(m.startup + m.active + m.recovery);
+  });
+});
+
+describe('bots and pits', () => {
+  // A random dungeon with the cage (the sunken pit) in it.
+  const seed = [...Array(500).keys()].find((s) => getStage(`mixed-${s}`).sections.some((c) => c.lower === 'cage'));
+  const stage = `mixed-${seed}`;
+  const cage = getStage(stage).sections.find((c) => c.lower === 'cage');
+
+  it('a bot in the cage climbs out to an enemy up beside it (not into the lip above)', () => {
+    for (const side of [-1, 1]) {
+      const w = createWorld({ stage, players: 2, countdown: 0, seed, storm: FAR_STORM });
+      const [a, b] = w.fighters;
+      const mid = cage.left + 128;
+      place(a, mid - side * 30, 78);
+      Object.assign(a, { hasGun: false, gun: null });
+      place(b, mid + side * 100, -2);
+      const bot = createBot('hard', 3);
+      for (let t = 0; t < 60 * 8 && a.y > -1; t++) step(w, [botInput(w, 0, bot), NEUTRAL]);
+      expect(a.y).toBeLessThan(0);
+    }
   });
 });

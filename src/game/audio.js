@@ -72,7 +72,8 @@ export class Sfx {
         return this.at(shotSound(e.gun), e.x, e.y, e.gun === 'rocket' ? 0.8 : e.gun === 'spores' || e.gun === 'firestaff' ? 0.35 : e.gun === 'money' ? 0.5 : 1);
       case 'swing': {
         const m = e.weapon ? MELEE[e.weapon] : STRIKE;
-        return this.at(m.weight === 'heavy' ? 'swing-heavy' : 'swing-light', e.x, e.y - 20, e.weapon ? 0.7 : 0.45);
+        // (A jab is a light whoosh, whatever the weapon.)
+        return this.at(m.weight === 'heavy' && !e.jab ? 'swing-heavy' : 'swing-light', e.x, e.y - 20, e.weapon && !e.jab ? 0.7 : 0.45);
       }
       case 'dash':
         return this.at('swing-heavy', e.x, e.y - 20, 0.9);
@@ -84,6 +85,10 @@ export class Sfx {
         if (e.kind === 'anvil') return this.at('hit-clonk', e.x, e.y);
         if (e.thrown) return this.at(e.on === 'body' ? 'hit-blunt' : 'impact-wall', e.x, e.y, 0.8);
         return this.at(e.on === 'body' ? 'impact-body' : 'impact-wall', e.x, e.y, e.on === 'body' ? 0.8 : 0.35);
+      case 'coverbreak':
+        return this.at('hit-clonk', e.x, e.y, 1);
+      case 'toobig':
+        return mine ? this.ui('ui-beep', 0.3) : undefined;
       case 'explosion':
       case 'fireball':
         return this.at('explosion', e.x, e.y);
@@ -104,6 +109,8 @@ export class Sfx {
         return this.at('critical', e.x, e.y);
       case 'radiation':
         return this.at('warp', e.x, e.y, 0.8);
+      case 'break':
+        return this.at('clang', e.x, e.y, 1);
       case 'plant':
         return this.at('clang', e.x, e.y, 1);
       case 'fizzle':

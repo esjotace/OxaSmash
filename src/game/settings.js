@@ -20,7 +20,8 @@ export const KEY_ACTIONS = [
   ['grenade', 'Grenade (also middle click)'],
   ['cycle', 'Next grenade (also the wheel)'],
   ['shoot', 'Shoot (also left click)'],
-  ['melee', 'Melee (also right click)'],
+  ['melee', 'Heavy melee (also right click; hold: special)'],
+  ['jab', 'Jab'],
 ];
 export const DEFAULT_KEYS = {
   left: [65, 37],
@@ -36,6 +37,7 @@ export const DEFAULT_KEYS = {
   cycle: [90],
   shoot: [],
   melee: [],
+  jab: [67],
 };
 
 // Controller actions (standard button numbering), with labels and defaults. Moving is the left
@@ -43,7 +45,8 @@ export const DEFAULT_KEYS = {
 export const PAD_ACTIONS = [
   ['jump', 'Jump'],
   ['shoot', 'Shoot'],
-  ['melee', 'Melee'],
+  ['melee', 'Heavy melee (hold: special)'],
+  ['jab', 'Jab'],
   ['dodge', 'Dodge'],
   ['block', 'Block'],
   ['grenade', 'Grenade'],
@@ -54,7 +57,11 @@ export const PAD_ACTIONS = [
   ['cycle', 'Next grenade'],
   ['menu', 'Menu'],
 ];
-export const DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, pickup: 3, block: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, down: 13, cycle: 15 };
+// (Block on the top face button, pick up on the D-pad's down; crouching is also always the left
+// stick pushed down, so its button sits on the D-pad's left. L jabs.)
+export const DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, block: 3, jab: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, pickup: 13, down: 14, cycle: 15 };
+// The layout the game used to start with: a saved layout still exactly like it moves to the new one.
+const OLD_DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, pickup: 3, block: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, down: 13, cycle: 15 };
 // What kind of controller this is, for button names and pictures: 'switch', 'ps' or 'xbox' (also
 // the default). Read from its id: the vendor (057e Nintendo, 054c Sony) or its name.
 export function padStyle(gp) {
@@ -92,7 +99,10 @@ function load() {
   for (const slot of DEVICE_SLOTS) {
     const d = saved.devices?.[slot] ?? {};
     devices[slot] = { character: typeof d.character === 'string' ? d.character : null };
-    if (slot !== 'kbm') devices[slot].pad = { ...DEFAULT_PAD, ...d.pad };
+    if (slot !== 'kbm') {
+      const same = d.pad && Object.entries(OLD_DEFAULT_PAD).every(([k, v]) => d.pad[k] === v);
+      devices[slot].pad = same ? { ...DEFAULT_PAD } : { ...DEFAULT_PAD, ...d.pad };
+    }
   }
   // (Older saves had one character and one controller layout: they go to the first slots.)
   if (typeof saved.character === 'string' && !saved.devices) devices.kbm.character = saved.character;
@@ -102,8 +112,11 @@ function load() {
 
 export const settings = load();
 
-// The first connected controller, whichever browser slot it sits in (the keyboard + mouse player's).
-export const firstPad = () => [...(navigator.getGamepads?.() ?? [])].find((g) => g && g.connected && g.buttons.length > 0) ?? null;
+// The keyboard + mouse player's controller: of the connected ones, whichever was used last (the
+// browser stamps each controller's latest input), in whatever slot it sits. (After a reload a
+// controller can be listed twice, or a stale one linger: this follows the one in your hands.)
+export const firstPad = () =>
+  [...(navigator.getGamepads?.() ?? [])].filter((g) => g && g.connected && g.buttons.length > 0).reduce((best, g) => (!best || g.timestamp > best.timestamp ? g : best), null);
 
 // rebinding: a controller button is being picked for a binding (the game mustn't also act on it,
 // e.g. open or close the menu).

@@ -108,11 +108,6 @@ export function buildDungeon(scene, st) {
     if (!DUNGEON_LOOKS.has(b.look)) continue;
     const cols = b.w / TILE;
     const rows = b.h / TILE;
-    if (b.look === 'boxes') {
-      // Crates for cover (a crate is 2 tiles wide).
-      for (let c = 0; c < b.w; c += 2 * TILE) out.push(scene.add.image(b.x + c, b.y, 'crate').setOrigin(0, 0).setDisplaySize(Math.min(2 * TILE, b.w - c), b.h));
-      continue;
-    }
     if (b.look === 'ledge') {
       planks ??= scene.add.graphics();
       plank(planks, b.x, b.y, b.w);

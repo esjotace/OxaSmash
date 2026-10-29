@@ -92,6 +92,7 @@ export function gunNotes(g) {
   if (g.spore) out.push(`about 1 spore in ${g.spore.every} leaves a poison patch (radius ${g.spore.radius}, ${g.spore.time} s, ${g.spore.perSecond}%/s)`);
   if (g.magazines === 1) out.push('no spare magazine');
   if (g.heavyThrow) out.push("thrown, it doesn't come back");
+  if (g.noCover) out.push("too big to fire from behind cover");
   if (g.weight === 'special') out.push("special: the style meter doesn't reload it; ammo chests do");
   return out;
 }
@@ -102,10 +103,7 @@ export function meleeQuirks(m) {
   if (m.thrust) out.push('a straight thrust, no arc');
   if (m.rising) out.push('swings from below to above');
   if (m.deflect) out.push(`swing into bullets to send them back (×${m.deflect.damageMul} damage)`);
-  if (m.followUp) {
-    const u = m.followUp;
-    out.push(`attack again within ${u.window} s for a sweep from behind you round to the front: ${u.damage} damage, push ${push(u.knockback, u.knockbackGrowth)}, ${u.arc}° arc`);
-  }
+  if (m.pushes) out.push('its heavy pushes moderately (a light weapon: quick, and light on stamina)');
   if (m.arc >= 180) out.push('a full circle: it hits behind you too');
   const t = throwOf(m);
   if (m.throwOnly) out.push(`too heavy to swing: attacking throws it in a high arc (it lands as a pickup): ${t.damage} damage, push ${push(t.knockback, t.knockbackGrowth)}; you move at ${Math.round(m.carrySlow * 100)}% speed carrying it`);
@@ -176,6 +174,9 @@ export function itemEffect(it) {
   return '—';
 }
 
+// A jab in a few words: damage, push (it never launches), speed.
+export const jabLine = (j) => `${n(j.damage)} dmg, push ${push(j.knockback, j.knockbackGrowth)}, ${speed(j)}`;
+
 // Which kind of thing a key is: 'gun', 'melee', 'thrown' (grenades) or 'item'.
 export const kindOf = (key) => (GUNS[key] ? 'gun' : MELEE[key] ? 'melee' : GRENADES[key] ? 'thrown' : ITEMS[key] ? 'item' : null);
 
@@ -202,7 +203,8 @@ export function describe(key) {
     };
   }
   if (kind === 'melee') {
-    const m = MELEE[key];
+    // (The heavy's numbers, with the jab's beside them.)
+    const m = MELEE[key].heavyStats;
     return {
       ...base,
       name: m.name,
@@ -213,6 +215,7 @@ export function describe(key) {
         ['Reach', n(m.reach)],
         ['Arc', m.arc ? `${m.arc}°` : 'thrust'],
         ['Speed', speed(m)],
+        ['Jab', jabLine(MELEE[key].jabStats)],
       ],
       quirks: meleeQuirks(m),
     };

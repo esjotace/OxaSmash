@@ -1,6 +1,6 @@
 // What the renderer needs from the world: drawn locally, and sent by the host to guests ~30×/s.
 import { GUNS, GRENADES, LOOT, ITEMS, HAVEN, GUN_THROW, AMMO_CHEST, STYLE } from './constants.js';
-import { stormStatus } from './world.js';
+import { stormStatus, sparesOf } from './world.js';
 
 const r1 = (n) => Math.round(n * 10) / 10;
 const r2 = (n) => Math.round(n * 100) / 100;
@@ -29,8 +29,8 @@ export function toView(world) {
       blade: f.blade,
       // The swing in progress: time since it started, its direction and the weapon swinging
       // (null = fists); the renderer animates the arc.
-      // (alt: the weapon's follow-up swing, the halberd's sweep.)
-      swing: f.swing >= 0 ? { t: r2(f.swing), x: r2(f.swingX), y: r2(f.swingY), w: f.swingWeapon, alt: f.swingAlt } : null,
+      // (jab: a jab, not the heavy swing.)
+      swing: f.swing >= 0 ? { t: r2(f.swing), x: r2(f.swingX), y: r2(f.swingY), w: f.swingWeapon, jab: f.swingVariant === 'jab' } : null,
       swingStance: f.swingStance,
       crouching: f.crouching,
       tucked: !!f.tucked,
@@ -45,7 +45,7 @@ export function toView(world) {
       kos: f.kos,
       hasGun: f.hasGun,
       ammo: f.ammo,
-      spareMags: f.spareMags,
+      spareMags: sparesOf(f),
       gun: f.gun,
       reload: f.reload > 0 && f.gun ? r2(1 - f.reload / GUNS[f.gun].reloadTime) : 0,
       grenades: f.grenades,
@@ -69,7 +69,7 @@ export function toView(world) {
       holding: f.holding >= 0 ? r2(f.holding) : null,
       // How drawn the bow is / charged the railgun (0..1), or null.
       // (Or how wound up the throw of an empty gun is.)
-      gunHold: f.gunHold >= 0 && f.gun ? r2(Math.min(1, f.gunHold / (f.ammo === 0 && f.spareMags === 0 ? GUN_THROW.hold : GUNS[f.gun].charge?.time ?? 1))) : null,
+      gunHold: f.gunHold >= 0 && f.gun ? r2(Math.min(1, f.gunHold / (f.ammo === 0 && sparesOf(f) === 0 ? GUN_THROW.hold : GUNS[f.gun].charge?.time ?? 1))) : null,
       slimed: !!f.slimed,
       // The trident out on its chain: where its head is, and whether it has caught someone.
       chain: f.chain ? { x: r1(f.chain.x), y: r1(f.chain.y), caught: f.chain.phase === 'pull' } : null,
@@ -106,7 +106,9 @@ export function toView(world) {
     crown: world.crown ?? -1,
     // Moving stage pieces: [y, there (1/0), about to change (1/0)].
     movers: world.movers.map((m) => [r1(m.y), m.on ? 1 : 0, m.warn ? 1 : 0]),
-    pickups: world.pickups.map((p) => ({ id: p.id, x: p.x, y: p.y, weapon: p.weapon })),
+    // (blink: an empty gun about to vanish.)
+    pickups: world.pickups.map((p) => ({ id: p.id, x: p.x, y: p.y, weapon: p.weapon, blink: p.ammo === 0 && p.t > GUN_THROW.emptyLife - GUN_THROW.emptyBlink })),
+    covers: world.covers.map((c) => (c.gone ? 0 : { hp: Math.ceil(c.hp), max: c.max, flash: c.flash > 0 })),
     barrels: world.barrels.map((b) => (b.gone ? 0 : b.flash > 0 || (b.fuse >= 0 && Math.floor(b.fuse * 30) % 2 === 0) ? 2 : 1)),
     storm: { left: r1(s.left), right: r1(s.right), wallLeft: r1(s.wallLeft), wallRight: r1(s.wallRight), text: status.text, next: status.next && [r1(status.next[0]), r1(status.next[1])] },
   };
