@@ -64,7 +64,9 @@ export const STAGES = {
     barrels: [...pairAt(440, 0), ...pairAt(800, 0), ...pairAt(600, -96), { x: 896, y: -128 }],
     pickupSpots: [...pairAt(360, 0), ...pairAt(256, -96), ...pairAt(520, -176), ...pairAt(180, -256), { x: 860, y: -128 }, { x: 896, y: -224 }],
     doors: [...pairAt(200, 0), ...pairAt(560, 0), ...pairAt(176, -96), ...pairAt(480, -176)],
-    spawns: [...pairAt(160, 0), ...pairAt(300, -176)],
+    // Starting spots (fighter i starts at spawns[i]): the street and the walkway, then (5 or more
+    // players) the street again and the rooftops.
+    spawns: [...pairAt(160, 0), ...pairAt(300, -176), ...pairAt(720, 0), ...pairAt(184, -256)],
     blast: { left: -120, top: -440, right: 1912, bottom: 200 },
     camera: { left: -60, top: -400, right: 1852, bottom: 160 },
     storm: { left: 48, right: 1744, top: -500, bottom: 200 },
@@ -154,11 +156,17 @@ export const STAGES = {
       { x: 1480, y: -272 },
       { x: 896, y: -272 },
     ],
+    // Starting spots (fighter i starts at spawns[i]): the street and the first floor, then (5 or
+    // more players) the street again and the scaffolding.
     spawns: [
       { x: 200, y: 0 },
       { x: 1592, y: 0 },
       { x: 360, y: -96 },
       { x: 1432, y: -96 },
+      { x: 620, y: 0 },
+      { x: 1172, y: 0 },
+      { x: 380, y: -192 },
+      { x: 1412, y: -192 },
     ],
     // Fly or fall outside this box and you lose a life.
     blast: { left: -120, top: -420, right: 1912, bottom: 200 },

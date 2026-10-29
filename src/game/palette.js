@@ -4,6 +4,8 @@ export const PLAYER_COLORS = [
   { css: '#3fb8ff', hex: 0x3fb8ff },
   { css: '#ffd23f', hex: 0xffd23f },
   { css: '#7ee081', hex: 0x7ee081 },
+  { css: '#c38bff', hex: 0xc38bff },
+  { css: '#ff9f43', hex: 0xff9f43 },
 ];
 
 export const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';

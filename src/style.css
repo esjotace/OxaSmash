@@ -794,3 +794,13 @@ kbd {
   border-color: #ffcf5a;
   background: #ffcf5a1a;
 }
+
+/* The lobby: people watching, waiting for a seat. */
+.watchers {
+  margin-top: 8px;
+  opacity: 0.75;
+}
+.watchers .dot {
+  background: transparent !important;
+  border: 2px solid var(--muted);
+}

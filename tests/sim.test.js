@@ -2273,7 +2273,7 @@ describe('items', () => {
   it('bounty: knocking out the champion takes the crown', () => {
     const w = world(2, { crown: 1, crownRule: 'bounty' });
     const b = w.fighters[1];
-    b.lastHitBy = 0;
+    Object.assign(b, { lastHitBy: 0, lastPlayerHitAt: w.tick, lastHitAt: w.tick });
     place(b, 600, 900);
     run(w, 2);
     expect(w.crown).toBe(0);

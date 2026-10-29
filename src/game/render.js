@@ -10,6 +10,7 @@ import { drawDosText, wrap, LINE, lineWidth } from './dosfont.js';
 import { iconFrame } from './padicons.js';
 import { buildVillage, isVillage, VILLAGE_LOOKS } from './village.js';
 import { buildCovers, updateCovers } from './cover.js';
+import { koLine } from './kolines.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
 import { PLAYER_COLORS, FONT } from './palette.js';
@@ -183,8 +184,10 @@ export class Renderer {
     this.world.addAt(this.havenG, this.world.getIndex(this.g));
 
     this.hudG = scene.add.graphics();
+    // (Up to 4 player cards at full width; more share the screen's width.)
+    this.panelW = Math.min(PANEL_W, Math.floor(VIEW_W / roster.length));
     this.panels = roster.map((p, i) => {
-      const x = VIEW_W / 2 - (roster.length * PANEL_W) / 2 + i * PANEL_W;
+      const x = VIEW_W / 2 - (roster.length * this.panelW) / 2 + i * this.panelW;
       const text = (size, color) => scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: `${size}px`, fontStyle: 'bold', color, resolution: this.res });
       const nades = [0, 1].map(() => scene.add.image(0, 0, '__WHITE').setVisible(false));
       // The weapons carried, drawn lying flat: the gun slot above, the melee slot below.
@@ -196,6 +199,8 @@ export class Renderer {
     this.banner = scene.add
       .text(VIEW_W / 2, VIEW_H * 0.36, '', { fontFamily: FONT, fontSize: '48px', fontStyle: 'bold', color: '#ffffff', stroke: '#0b0d18', strokeThickness: 8, resolution: this.res })
       .setOrigin(0.5);
+    // Knockout lines, top left (see kolines.js): the newest at the bottom, each fading out.
+    this.feed = [];
     this.specText = scene.add.text(VIEW_W / 2, 26, '', { fontFamily: FONT, fontSize: '9px', fontStyle: 'bold', color: '#d9dcf2', align: 'center', stroke: '#0b0d18', strokeThickness: 3, resolution: this.res }).setOrigin(0.5, 0);
     this.hud.add([this.hudG, ...this.panels.flatMap((p) => [p.name, p.damage, p.ammo, p.melee, p.ms, p.gunIcon, p.meleeIcon, ...p.nades]), this.stormText, this.banner, this.specText]);
 
@@ -444,6 +449,7 @@ export class Renderer {
           this.addWord({ x: e.x, y: e.y, text: 'BACKSTAB', scale: 0 });
           break;
         case 'ko':
+          this.addFeed(koLine(e, this.roster.map((p) => p.name)), e.id);
           this.burst(e.x, e.y, 0, 0, 40, 320, PLAYER_COLORS[e.id]?.hex ?? 0xffffff, 80);
           this.rings.push({ x: e.x, y: e.y, r: 10, life: 0.35 });
           this.shake(0.8);
@@ -943,6 +949,25 @@ export class Renderer {
     }
   }
 
+  // A knockout line at the top left, in the knocked-out player's colour; at most 4 at once.
+  addFeed(text, id) {
+    const t = this.scene.add.text(6, 0, text, { fontFamily: FONT, fontSize: '9px', fontStyle: 'bold', color: PLAYER_COLORS[id]?.css ?? '#ffffff', stroke: '#0b0d18', strokeThickness: 3, resolution: this.res });
+    this.hud.add(t);
+    this.feed.push({ t, age: 0 });
+    while (this.feed.length > 4) this.feed.shift().t.destroy();
+  }
+
+  updateFeed(dt) {
+    const LIFE = 6;
+    this.feed = this.feed.filter((f) => {
+      f.age += dt;
+      if (f.age < LIFE) return true;
+      f.t.destroy();
+      return false;
+    });
+    this.feed.forEach((f, k) => f.t.setPosition(6, 6 + k * 12).setAlpha(Math.min(1, (LIFE - f.age) / 0.6, f.age * 8)));
+  }
+
   // A puff of dust (the smoke strip, tinted dusty), size: its scale.
   dust(x, y, size) {
     if (!this.scene.textures.exists('fx-smoke')) return this.burst(x, y, 0, -1, 4, 40, C('#b8a58a'), 0, 1.4);
@@ -1059,6 +1084,7 @@ export class Renderer {
     this.drawParticles(dt);
     this.drawStorm(view.storm);
     this.drawHud(view, dt);
+    this.updateFeed(dt);
   }
 
   // The spectator camera: following someone (←/→ to switch), or free (Space: from the whole
@@ -1600,13 +1626,13 @@ export class Renderer {
       const bx = p.x + 4;
       const by = VIEW_H - 50;
       const color = PLAYER_COLORS[i].hex;
-      g.fillStyle(C('#0a0d1a'), 0.78).fillRect(bx, by, PANEL_W - 8, 46);
-      g.fillStyle(color, 1).fillRect(bx, by, PANEL_W - 8, 2);
-      for (let s = 0; s < f.stocks; s++) g.fillRect(bx + PANEL_W - 8 - 8 - s * 7, by + 6, 5, 5);
+      g.fillStyle(C('#0a0d1a'), 0.78).fillRect(bx, by, this.panelW - 8, 46);
+      g.fillStyle(color, 1).fillRect(bx, by, this.panelW - 8, 2);
+      for (let s = 0; s < f.stocks; s++) g.fillRect(bx + this.panelW - 8 - 8 - s * 7, by + 6, 5, 5);
       p.name.setPosition(bx + 6, by + 3);
-      // Online: each player's ping (the host's is "host"), in the card's lower right corner.
+      // Online: each player's ping, in the card's lower right corner.
       const ms = view.pings?.[i];
-      p.ms.setText(ms === undefined || ms === null ? '' : ms === 0 && i === 0 ? 'HOST' : `${ms}ms`).setColor(ms === null || ms === undefined || ms < 80 ? '#7dff9a' : ms < 150 ? '#ffd966' : '#ff7399').setPosition(bx + PANEL_W - 11, by + 45);
+      p.ms.setText(ms === undefined || ms === null ? '' : `${ms}ms`).setColor(ms === null || ms === undefined || ms < 80 ? '#7dff9a' : ms < 150 ? '#ffd966' : '#ff7399').setPosition(bx + this.panelW - 11, by + 45);
       this.pulse[i] = Math.max(0, this.pulse[i] - dt);
       if (f.state === 'out') {
         p.damage.setText('OUT').setColor('#737891').setScale(1).setPosition(bx + 6, by + 18);

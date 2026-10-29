@@ -673,9 +673,16 @@ export const STORM = {
   wallKoSpeed: 150,
 };
 
+// Who gets a knockout (the KO point and the line at the top of the screen): whoever last hit you,
+// if it was within `credit` s; later than that, you did it yourself. Finished off by a hazard
+// (spikes, the crusher, the lamp's doom), they only get it if they hit you within `hazard` s of it.
+export const KO_CREDIT = { credit: 2, hazard: 1 };
+
 export const RULES = {
   stocks: 3,
-  maxPlayers: 4,
+  maxPlayers: 4, // on one screen (and solo)
+  maxOnline: 6, // in an online room
+  maxWatching: 6, // people watching an online room (waiting for a seat)
   countdown: 3,
   endDelay: 2,
 };

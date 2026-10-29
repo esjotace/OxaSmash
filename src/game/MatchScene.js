@@ -1,11 +1,11 @@
-// One match. Three modes:
+// One match. Two modes:
 //   local  – this browser runs the rules (solo vs bots, or players sharing this screen)
-//   host   – same, plus remote players' inputs come in and the state goes out ~30×/s
-//   client – sends this player's input, draws the host's state slightly in the past (smooth)
+//   client – online: sends this player's input to the game server, and draws the state it sends
+//            back slightly in the past (smooth)
 import Phaser from 'phaser';
 import { COVER_ART } from './cover.js';
 import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE } from '../sim/constants.js';
-import { createWorld, step, removeFighter, spawnWeapon, setHealthRule } from '../sim/world.js';
+import { createWorld, step, spawnWeapon, setHealthRule } from '../sim/world.js';
 import { toView } from '../sim/view.js';
 import { NEUTRAL, encodeInput } from '../sim/input.js';
 import { createBot, botInput, configureBot } from '../bots/bot.js';
@@ -16,7 +16,6 @@ import { settings } from './settings.js';
 import { SOUNDS } from './audio.js';
 import { STAGES, DEFAULT_STAGE, isStageId } from '../sim/stage.js';
 
-const SNAP_EVERY = 2; // ticks between state messages from the host
 const INTERP_TICKS = 5; // guests draw this far behind the newest state, to smooth out jitter
 const RESEND_MS = 100; // guests resend unchanged input this often anyway
 
@@ -26,9 +25,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   // cfg: { mode, roster: [{ name, kind: kbm|pad0..pad3|bot|remote, level, char }], you, stocks, room, onEnd,
-  //        rules: { melee, ranged }, stormPace: off|slow|normal|fast,
-  //        slots: (a duel, hosted) the room player each fighter is, when not everyone in the room plays }
-  // you: -1 for someone only watching (a guest spectating a duel).
+  //        rules: { melee, ranged }, stormPace: off|slow|normal|fast }
+  // you: -1 for someone only watching (spectating a duel).
   init(cfg) {
     this.cfg = cfg;
     this.menuOpen = false; // the in-game menu is up (the mouse is free, a local match is paused)
@@ -36,8 +34,6 @@ export class MatchScene extends Phaser.Scene {
     this.ended = false;
     this.view = null;
     this.snaps = [];
-    this.outbox = [];
-    this.leavers = [];
     this.lastSent = '';
     this.lastSentAt = 0;
   }
@@ -107,16 +103,6 @@ export class MatchScene extends Phaser.Scene {
         this.setDummyHealth(this.cfg.dummies.health);
         this.setTrainingOptions(this.cfg.dummies);
       }
-      this.remote = roster.map(() => NEUTRAL);
-      if (mode === 'host') {
-        // (Room players to fighters: the same, unless only some of the room plays, a duel.)
-        const slots = this.cfg.slots;
-        const fighter = (r) => (slots ? slots.indexOf(r) : r);
-        room.on('input', (r, input) => fighter(r) >= 0 && (this.remote[fighter(r)] = input));
-        room.on('leave', (r) => fighter(r) >= 0 && this.leavers.push(fighter(r)));
-        // A guest picked another character: show it, and pass it on to everyone (in the snaps).
-        room.on('char', (r, char) => fighter(r) >= 0 && this.draw.setChar(fighter(r), char));
-      }
       this.view = toView(this.world);
     }
 
@@ -128,7 +114,6 @@ export class MatchScene extends Phaser.Scene {
       this.spectator.destroy();
       if (this.input.mouse?.locked) this.input.mouse.releasePointerLock();
       if (mode === 'client') room.on('snap', () => {});
-      if (mode === 'host') room.on('input', () => {}).on('leave', () => {}).on('char', () => {});
     });
   }
 
@@ -226,37 +211,21 @@ export class MatchScene extends Phaser.Scene {
   }
 
   updateLocal(delta) {
-    const { mode, roster, room } = this.cfg;
+    const { roster } = this.cfg;
     // Fixed steps: the rules always advance in 1/60 s ticks, whatever the screen's refresh rate.
     this.acc = Math.min(this.acc + delta / 1000, 0.25);
     while (this.acc >= DT) {
       this.acc -= DT;
-      for (const i of this.leavers.splice(0)) removeFighter(this.world, i);
       step(this.world, roster.map((p, i) => this.inputFor(i)));
-      if (this.world.events.length) {
-        this.draw.effects(this.world.events);
-        if (mode === 'host') this.outbox.push(...this.world.events);
-      }
-      if (mode === 'host' && this.world.tick % SNAP_EVERY === 0) {
-        room.broadcast({ t: 'snap', v: { ...toView(this.world), pings: this.pings() }, e: this.outbox, c: this.draw.chars });
-        this.outbox = [];
-      }
+      if (this.world.events.length) this.draw.effects(this.world.events);
     }
     this.view = toView(this.world);
-    if (mode === 'host') this.view.pings = this.pings();
-  }
-
-  // Each fighter's ping (see HostRoom.pings), in fighter order.
-  pings() {
-    const all = this.cfg.room.pings();
-    return this.cfg.slots ? this.cfg.slots.map((r) => all[r] ?? null) : all;
   }
 
   inputFor(i) {
     // (With the menu up, your own players stand still: online matches keep going.)
     if (this.controls[i]) return this.menuOpen ? this.controls[i].idle() : this.controls[i].read(this.world.fighters[i]);
-    if (this.bots[i]) return botInput(this.world, i, this.bots[i]);
-    return this.remote[i];
+    return this.bots[i] ? botInput(this.world, i, this.bots[i]) : NEUTRAL;
   }
 
   receiveSnap(msg) {
@@ -268,7 +237,7 @@ export class MatchScene extends Phaser.Scene {
     if (this.snaps.length > 30) this.snaps.shift();
     if (Array.isArray(msg.e)) this.draw.effects(msg.e.slice(0, 64));
     // Characters picked mid-match (the renderer ignores anything that isn't one).
-    if (Array.isArray(msg.c)) msg.c.slice(0, 4).forEach((char, i) => this.draw.setChar(i, char));
+    if (Array.isArray(msg.c)) msg.c.slice(0, 8).forEach((char, i) => this.draw.setChar(i, char));
   }
 
   updateClient(time) {
