@@ -24,6 +24,11 @@ function cast(roster) {
 
 const $ = (id) => document.getElementById(id);
 
+// Which build this is, in the menu's corner (the Docker build sets these; see Dockerfile).
+const VERSION = import.meta.env.VITE_APP_VERSION || 'dev';
+const BUILD = import.meta.env.VITE_APP_BUILD;
+$('version').textContent = BUILD ? `${VERSION} · build ${BUILD}` : VERSION;
+
 // Phaser is most of the download, so the menu shows first and the game loads right after.
 let gameModule = null;
 const loadGame = () => (gameModule ??= import('./game/game.js'));

@@ -17,6 +17,9 @@ const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist
 const TICK_MS = 1000 / 60;
 const MAX_ROOMS = 200;
 const MAX_MESSAGE = 4096; // bytes: inputs and moves are tiny
+// Set by the Docker build (see Dockerfile), so you can tell which build is deployed.
+const VERSION = process.env.APP_VERSION ?? 'dev';
+const BUILD = process.env.APP_BUILD ?? '';
 
 const rooms = new Map(); // code -> Room
 const now = () => performance.now();
@@ -28,6 +31,10 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' });
     return res.end(`ok ${rooms.size} rooms`);
+  }
+  if (url.pathname === '/version') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ version: VERSION, build: BUILD }));
   }
   // (Only files inside dist/.)
   const file = path.join(DIST, path.normalize(decodeURIComponent(url.pathname)).replace(/^([/\\])+/, '') || 'index.html');
@@ -114,4 +121,4 @@ setInterval(() => {
   for (const room of rooms.values()) for (const p of room.players) p.send?.({ t: 'ping', s });
 }, 1000);
 
-server.listen(PORT, HOST, () => console.log(`OxaSmash server on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT} (rooms at /ws)`));
+server.listen(PORT, HOST, () => console.log(`OxaSmash ${[VERSION, BUILD].filter(Boolean).join(' ')} server on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT} (rooms at /ws)`));

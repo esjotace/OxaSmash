@@ -1,0 +1,48 @@
+# OxaSmash on a droplet, behind nginx.
+#
+# First time (on the droplet, with Docker installed):
+#   mkdir -p ~/oxasmash && cd ~/oxasmash     # put this file here
+#   docker compose up -d
+# Then point an nginx proxy host at port 8060 (see below).
+#
+# Update to the newest :latest build:
+#   docker compose pull && docker compose up -d
+# Logs:
+#   docker compose logs -f
+#
+# To pin a specific release instead of following latest, change the tag to e.g. :v1.
+# Rooms live in memory: restarting the container ends any match in progress.
+
+services:
+  oxasmash:
+    image: esjotace/oxasmash:latest
+    container_name: oxasmash
+    restart: unless-stopped
+    ports:
+      - "8060:8787"          # host port 8060 -> game server (nginx proxies to this)
+    environment:
+      PORT: "8787"
+    stop_grace_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# nginx: online rooms use a WebSocket at /ws, so the proxy must pass the Upgrade headers.
+#
+# Nginx Proxy Manager "proxy host":
+#   Scheme http, Forward Hostname/IP = the droplet's IP (or 172.17.0.1 if NPM runs in
+#   Docker on the same droplet), Forward Port 8060, and turn ON "Websockets Support".
+#   SSL via Let's Encrypt works as-is (the page switches to wss:// on https).
+#
+# Plain nginx server block:
+#   location / {
+#     proxy_pass http://127.0.0.1:8060;
+#     proxy_http_version 1.1;
+#     proxy_set_header Upgrade $http_upgrade;
+#     proxy_set_header Connection "upgrade";
+#     proxy_set_header Host $host;
+#     proxy_read_timeout 1h;        # keep idle game connections open
+#     proxy_buffering off;
+#   }

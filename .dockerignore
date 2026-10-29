@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log
+dist
+.git
+.gitignore
+.claude
+.agents
+skills-lock.json
+tests
+tools
+docs
+Dockerfile
+.dockerignore
+docker-compose.yml
+*.md
+__pycache__
+*.tmp

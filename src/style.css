@@ -50,6 +50,16 @@ body {
   display: none;
 }
 
+#version {
+  position: absolute;
+  bottom: 6px;
+  right: 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.55;
+}
+
 .panel {
   width: min(920px, 100%);
   background: var(--panel);

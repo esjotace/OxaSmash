@@ -12,10 +12,10 @@
     "items": "node tools/items_md.mjs"
   },
   "dependencies": {
-    "phaser": "^4.2.1",
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "phaser": "^4.2.1",
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },

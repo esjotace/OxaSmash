@@ -61,3 +61,27 @@ game.example.com {
 ```
 
 Then the game is at `https://game.example.com`, rooms included. To keep the page on GitHub Pages instead, build it with the server's address: `VITE_SERVER_URL=wss://game.example.com/ws npm run build`, and publish `dist/`.
+
+### Docker
+
+Images are published as `esjotace/oxasmash`:
+
+- `:latest`: the most recent build, overwritten on every release.
+- `:v1`, `:v2`, …: milestone versions, created only when a bigger feature set is ready.
+
+The image builds the page and runs the game server on port 8787 inside the container (page, rooms at `/ws`, `/health`, `/version`). Locally: `docker build -t esjotace/oxasmash:latest .` then `docker run -p 8787:8787 esjotace/oxasmash:latest` and open http://localhost:8787.
+
+**On the droplet** (Docker installed): copy [docker-compose.yml](docker-compose.yml) to a folder and run `docker compose up -d`. The game listens on host port **8060**; point an nginx proxy host at it with **WebSocket support on**. The compose file has the Nginx Proxy Manager settings and a plain nginx `location` block. Update with `docker compose pull && docker compose up -d`. Rooms live in memory: restarting the container ends any match in progress.
+
+**Releasing** (from this folder, signed in with `docker login`):
+
+```bash
+# every release: rebuild and overwrite latest (VERSION = the current milestone)
+docker build --platform linux/amd64 --build-arg VERSION=v1 --build-arg BUILD="$(date -u '+%Y-%m-%d %H:%M UTC')" -t esjotace/oxasmash:latest .
+docker push esjotace/oxasmash:latest
+# milestone only: build with the new version so the label matches, tag it too, push both
+docker build --platform linux/amd64 --build-arg VERSION=v2 --build-arg BUILD="$(date -u '+%Y-%m-%d %H:%M UTC')" -t esjotace/oxasmash:v2 -t esjotace/oxasmash:latest .
+docker push esjotace/oxasmash:v2 && docker push esjotace/oxasmash:latest
+```
+
+`VERSION` (the newest milestone) and `BUILD` (a timestamp) show in the corner of the menu, at `/version` and in the server log at startup, so you can tell which build is deployed.
