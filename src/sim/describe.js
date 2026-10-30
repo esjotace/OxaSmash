@@ -60,6 +60,7 @@ export const BLURBS = {
   drowsy: 'A pink cloud that makes you sleepy. Keep moving.',
   warp: 'Teleports you where it lands, or swaps you with whoever it hits.',
   polymorph: 'Turns everyone it splashes into a random animal.',
+  soda: 'Shake it. The longer you shake, the bigger the burst.',
   c4: 'Stick it anywhere, then set it off when you like.',
   cashnade: 'A real grenade that leaves money everywhere. Grab it to heal.',
   blackhole: 'No damage: it just pulls everyone in.',
@@ -162,6 +163,7 @@ export function grenadeEffect(k) {
     return `sticks to the first wall, floor or person it touches; press the grenade button again to set it off: radius ${e.radius}, ${e.damage} damage, push ${push(e.knockback, e.knockbackGrowth)}`;
   }
   if (k.warp) return 'teleports you to where it goes off; hit someone on the way and you swap places';
+  if (k.soda) return `shake it (hold) up to ${k.fuse} s: it bursts on the first thing it touches, from radius ${k.soda.min.radius}, ${k.soda.min.damage} damage, push ${k.soda.min.knockback} + ${k.soda.min.knockbackGrowth}×% (no shaking) to radius ${k.soda.max.radius}, ${k.soda.max.damage} damage, push ${k.soda.max.knockback} + ${k.soda.max.knockbackGrowth}×% (fully shaken, which is also when it bursts in your hand)`;
   if (k.polymorph) return `everyone within ${k.polymorph.radius} px (you too) turns into a random animal for up to ${k.polymorph.time} s: they can walk and jump, nothing else; any damage, any status or a KO turns them back`;
   if (k.plant) return `plants itself where it first lands on a floor: that stretch of the stage (its section on a random stage, or ${HAVEN.width} px) turns melee only, in your colour: shots and thrown things (not thrown melee weapons) vanish entering it, and guns don't fire inside it. Spend ${k.plant.hold} s in there and you gain a life; step out of it for more than ${HAVEN.away} s and it fades away. A new banner replaces it`;
   return '—';

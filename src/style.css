@@ -116,6 +116,10 @@ body {
   margin: 12px 0;
 }
 
+.field[hidden] {
+  display: none;
+}
+
 .field {
   display: grid;
   gap: 4px;

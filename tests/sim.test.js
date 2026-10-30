@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin } from '../src/sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../src/sim/input.js';
-import { CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
+import { VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
 import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS } from '../src/sim/constants.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { STAGES, getStage } from '../src/sim/stage.js';
@@ -3144,5 +3144,164 @@ describe('waking up early', () => {
     b.sleep = SLEEP.time;
     run(w, T(SLEEP.time) - 3);
     expect(b.sleep).toBeGreaterThan(0);
+  });
+});
+
+describe('the shaken soda', () => {
+  // A soda going off right by b, shaken `power` (0..1); b's damage after.
+  function burst(power) {
+    const w = world();
+    const b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.invincible = 0;
+    w.grenades.push({ id: 50, owner: 0, kind: 'soda', x: 700, y: -14, vx: 0, vy: 0, fuse: 0.01, on: -1, stuck: false, power });
+    run(w, 3);
+    return b.damage;
+  }
+
+  it('the longer it was shaken, the harder it bursts', () => {
+    expect(burst(0)).toBeGreaterThan(0);
+    expect(burst(1)).toBeGreaterThan(burst(0) * 3);
+  });
+
+  it('thrown, it bursts on the first thing it touches (no waiting for the fuse)', () => {
+    const w = world();
+    const b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.invincible = 0;
+    w.grenades.push({ id: 50, owner: 0, kind: 'soda', x: 670, y: -16, vx: 300, vy: 0, fuse: 3, on: -1, stuck: false, power: 0.5 });
+    run(w, 12);
+    expect(w.grenades.length).toBe(0);
+    expect(b.damage).toBeGreaterThan(0);
+  });
+
+  it('shaken a full fuse, it bursts in your hand', () => {
+    const w = world();
+    const a = w.fighters[0];
+    place(a, 600, -2);
+    run(w, 10);
+    Object.assign(a, { invincible: 0, grenades: ['soda'] });
+    run(w, Math.round(GRENADES.soda.fuse * 60) + 5, () => [{ ...NEUTRAL, gp: 1, grenadeHeld: true }]);
+    expect(a.damage).toBeGreaterThanOrEqual(GRENADES.soda.soda.max.damage * 0.5);
+  });
+});
+
+describe('stage gadgets: drifting logs, gas vents, wind, portals', () => {
+  const on = (stage) => createWorld({ stage, players: 2, countdown: 0, seed: 7, storm: FAR_STORM });
+
+  it('a drifting log carries whoever stands on it', () => {
+    const w = on('swamp');
+    const f = w.fighters[0];
+    run(w, 2);
+    const log = w.live.find((b) => b.look === 'log');
+    Object.assign(f, { x: log.x + log.w / 2, y: log.y, vx: 0, vy: 0 });
+    run(w, 3);
+    const before = f.x - w.live.find((b) => b.look === 'log').x;
+    run(w, 60);
+    const after = f.x - w.live.find((b) => b.look === 'log').x;
+    expect(f.grounded).toBe(true);
+    expect(Math.abs(after - before)).toBeLessThan(2);
+  });
+
+  it('gas vents bubble, then blow: a push away and poison', () => {
+    const w = on('swamp');
+    const v = getStage('swamp').vents[0];
+    const f = w.fighters[0];
+    run(w, 2);
+    Object.assign(f, { x: v.x + 30, y: 0, vx: 0, vy: 0, invincible: 0 });
+    w.tick = Math.round((v.every - VENT.warn / 2) * 60);
+    step(w, []);
+    expect(w.vents[0]).toBeGreaterThan(0.4); // (halfway through the warning)
+    run(w, Math.round((VENT.warn / 2) * 60) + 2);
+    expect(f.poison).toBeGreaterThan(0);
+    expect(f.vx).toBeGreaterThan(0); // (away from it)
+    const hurt = f.damage;
+    run(w, 60);
+    expect(f.damage).toBeGreaterThan(hurt); // (the poison)
+  });
+
+  it('a gust carries people along (faster with it, slower against it) and blows money away', () => {
+    const w = on('pines');
+    const [a, b] = w.fighters;
+    const wind = getStage('pines').wind;
+    w.tick = Math.round((wind.every - WIND.gust[0] + 0.2) * 60);
+    Object.assign(a, { x: 600, y: 0, vx: 0, vy: 0 });
+    Object.assign(b, { x: 1200, y: 0, vx: 0, vy: 0 });
+    w.loot.push({ x: 1100, y: 0, vx: 0, vy: 0, landed: true, t: 0, value: 5, look: 'coin' });
+    run(w, 40, () => [NEUTRAL, NEUTRAL]);
+    expect(w.wind.on).toBe(true);
+    expect(Math.sign(a.vx)).toBe(w.wind.dir);
+    expect(Math.abs(a.vx)).toBeCloseTo(WIND.ground, 0);
+    expect(Math.sign(w.loot[0].vx)).toBe(w.wind.dir);
+  });
+
+  it('a portal catches someone knocked flying through it', () => {
+    const w = on('pines');
+    const f = w.fighters[0];
+    const [a, b] = w.portalsAt;
+    run(w, 2);
+    // (Fast enough to cross the portal's whole width in a tick or two.)
+    Object.assign(f, { x: a.x + 40, y: a.y - 10, vx: -1500, vy: 0, hitstun: 1 });
+    run(w, 3);
+    expect(Math.abs(f.x - b.x)).toBeLessThan(80);
+  });
+
+  it('when the storm reaches a portal, both move clear of it, apart, never over a pit', () => {
+    for (let seed = 1; seed <= 12; seed++) {
+      const w = createWorld({ stage: 'pines', players: 2, countdown: 0, seed, storm: FAR_STORM });
+      run(w, 2);
+      Object.assign(w.storm, { wallLeft: 400, wallRight: 1400 });
+      step(w, []);
+      const [p, q] = w.portalsAt;
+      for (const o of [p, q]) {
+        expect(o.x).toBeGreaterThan(400);
+        expect(o.x).toBeLessThan(1400);
+      }
+      expect(Math.abs(p.x - q.x)).toBeGreaterThanOrEqual(Math.min(PORTAL.apart, 1000 / 2) - 40);
+      // At least one on the ground (on a solid floor, not over the gap).
+      const grounded = (o) => getStage('pines').blocks.some((r) => !r.oneWay && Math.abs(r.y - o.y) < 1 && o.x > r.x && o.x < r.x + r.w);
+      expect(grounded(p) || grounded(q)).toBe(true);
+    }
+  });
+
+  it('a portal sends you out of the other one, moving as you were', () => {
+    const w = on('pines');
+    const f = w.fighters[0];
+    const [a, b] = w.portalsAt;
+    run(w, 2);
+    Object.assign(f, { x: a.x, y: a.y, vx: -60, vy: 0 });
+    step(w, []);
+    expect(Math.abs(f.x - b.x)).toBeLessThan(4);
+    expect(f.portalCd).toBeGreaterThan(0);
+  });
+});
+
+describe('shooting right up against things', () => {
+  it('a shot fired with the muzzle against a barrel still hits it', () => {
+    const w = world();
+    const a = w.fighters[0];
+    place(a, 600, -2);
+    run(w, 10);
+    w.barrels.push({ x: 612, y: 0, hp: 8, gone: false, fuse: -1, lastBy: -1 });
+    const b = w.barrels[w.barrels.length - 1];
+    w.rng = () => 0.5;
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+    run(w, 3);
+    expect(b.hp < 8 || b.fuse >= 0 || b.gone).toBe(true);
+  });
+});
+
+describe('low cover that never breaks (lowCover)', () => {
+  it("crouching beside the swamp's vent rock tucks you behind it, and shots don't break it", () => {
+    const w = createWorld({ stage: 'swamp', players: 2, countdown: 0, seed: 3, storm: FAR_STORM });
+    const f = w.fighters[0];
+    const rock = getStage('swamp').blocks.find((b) => b.look === 'ventrock');
+    run(w, 2);
+    Object.assign(f, { x: rock.x - FIGHTER.w / 2 - 2, y: 0, vx: 0, vy: 0 });
+    run(w, 5, () => [{ ...NEUTRAL, crouch: true, down: true }]);
+    expect(f.tucked).toBe(true);
+    expect(w.covers.some((c) => c.look === 'ventrock')).toBe(false);
   });
 });

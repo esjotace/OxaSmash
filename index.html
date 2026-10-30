@@ -138,6 +138,7 @@
             <dt>Fire</dt><dd>Mucho daño, y te prende.</dd>
             <dt>Smoke</dt><dd>Una nube donde nadie ve nada.</dd>
             <dt>Poison</dt><dd>Una nube que duele poquito a poco.</dd>
+            <dt>Shaken Soda</dt><dd>Una lata de refresco. Mientras la aguantas la estás batiendo: mientras más la batas, más grande el reventón (hasta 3 segundos... y a los 3 te revienta en la mano). Revienta apenas toca algo: pared, piso o cara.</dd>
             <dt>Drowsy Gas</dt><dd>Una nube rosada que da sueño. Si la tocas, vas 30% más lento y en 3 segundos te duermes. Para sacudírtelo: muévete a lo loco (izquierda-derecha, saltar, dash, abajo llenan la barrita rosada; caminar derecho no cuenta y repetir lo mismo cuenta menos) o que te peguen, que también despierta. Quedarse quieto adentro es la peor idea.</dd>
             <dt>Warp</dt><dd>Te teletransporta a donde cae. Si le pega a alguien, intercambian lugares.</dd>
           </dl>
@@ -414,7 +415,7 @@
           <div class="checks" role="group" aria-label="Their health">
             <label class="field small">Health <select id="dumHealth"><option value="normal">Normal</option><option value="set">Set (never changes)</option><option value="banded">Banded (back after a while)</option><option value="reset">Reset (once, then normal)</option></select></label>
             <label class="field small">at <input id="dumHealthValue" type="number" min="0" max="300" step="10" value="0" />%</label>
-            <label class="field small">back after <input id="dumHealthAfter" type="number" min="0.5" max="10" step="0.5" value="2" /> s</label>
+            <label id="dumHealthAfterField" class="field small">back after <input id="dumHealthAfter" type="number" min="0.5" max="10" step="0.5" value="2" /> s</label>
           </div>
           <p id="dumNote" class="muted"></p>
         </section>

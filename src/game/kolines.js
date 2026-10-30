@@ -61,6 +61,7 @@ export const KO_LINES = {
   lamp: ['{B} rubbed the lamp and wished for doom. Granted.', 'The genie took {B} literally', '{B} learned to read the fine print on wishes'],
 
   // ---- Hazards (nobody to blame) ----
+  vent: ['{B} breathed in the swamp', 'the swamp burped {B} away', '{B} found out what the bubbles were'],
   spikes: ['{B} found the spikes. Pointy.', '{B} sat on a spike', '{B} hugged the spike wall'],
   crusher: ['{B} got crushed. Flat.', '{B} became a pancake', '{B} stood under the crusher. Brave.'],
   storm: ['{B} got swallowed by the storm', '{B} went for a walk in the storm', '{B} was eaten by weather'],

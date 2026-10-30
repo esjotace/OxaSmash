@@ -183,6 +183,10 @@ export const GRENADES = {
   poison: { name: 'Poison', fuse: 1.6, cloud: { radius: 70, time: 8, perSecond: 3 } },
   // A light pink gas: whoever walks into it goes drowsy (see DROWSY). It doesn't hurt.
   drowsy: { name: 'Drowsy Gas', fuse: 1.6, cloud: { radius: 70, time: 6, perSecond: 0, drowsy: true } },
+  // A soda can: the longer it's shaken (held, cooking) the bigger it bursts, from `min` to `max`
+  // at a full `fuse` of shaking (which is also when it bursts in your hand). Thrown, it bursts on
+  // the first thing it touches: a wall, the floor, someone.
+  soda: { name: 'Shaken Soda', fuse: 3, impact: true, soda: { min: { radius: 40, damage: 3, knockback: 160, knockbackGrowth: 1.5 }, max: { radius: 80, damage: 18, knockback: 440, knockbackGrowth: 4.5 } } },
   // A thrown potion: everyone within `radius` (the thrower too) turns into a random animal (see
   // ANIMALS) for up to `time` s: they can walk and jump, nothing else. Any damage, any status or
   // a KO turns them back.
@@ -645,7 +649,26 @@ export const MOVERS = {
   lift: { wait: 1.2, travel: 2.6 },
   // Crumbling floor: a tile shakes once stood on, falls away, and comes back later.
   crumble: { shake: 0.5, gone: 3.5 },
+  // Drifting (a log on the water): back and forth between `left` and `right` (the stage's), once
+  // each way per `period` s, easing at the ends.
 };
+
+// Gas vents (a stage's `vents`, each under a mossy rock you can hide behind): every `every` s (each
+// its own `phase`) one blows, bubbling for `warn` s before: anyone within `radius` takes `damage`,
+// is pushed away (`knockback` + `knockbackGrowth` × %) and poisoned (`poison.perSecond` % a second
+// for `poison.time` s, like burning, in green).
+export const VENT = { warn: 1.5, radius: 48, damage: 15, knockback: 420, knockbackGrowth: 3, poison: { time: 3, perSecond: 3 } };
+// Wind (a stage's `wind: { every }`): every `every` s a gust blows for `gust[0]` to `gust[1]` s,
+// the other way each time, after `warn` s of warning. Blowing, it's like a current: people drift
+// with it at `air` px/s in the air, `ground` px/s standing (running against it is slower, with it
+// faster); grenades and money lying around are blown along too (`things` px/s).
+export const WIND = { warn: 2, gust: [5, 8], air: 150, ground: 80, things: 110 };
+// Portals (a stage's `portals`, a pair): go into one (walking, jumping or knocked flying), come
+// out of the other, moving as you were; not again for `cooldown` s. Each is `w` x `h` px, standing
+// on its spot. When the storm reaches one, both move somewhere still clear of it, at least `apart`
+// px from each other (or half the clear space, if that's less), never over a pit: both on the
+// ground, or (half the time) one on the ground and one in the air, `air` px up at most.
+export const PORTAL = { cooldown: 0.8, w: 32, h: 56, apart: 320, air: 200 };
 
 // Dash (the dodge key, F): costs `cost` of the stamina bar (it refills from empty in `recharge` s),
 // so a full bar is two dashes. A quick shove in the direction you hold (backwards if you hold

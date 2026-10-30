@@ -53,6 +53,7 @@ export function toView(world) {
       // The grenade in hand: its kind and how much of its fuse is left (0..1).
       cooking: f.cook >= 0 ? { kind: f.cooking, left: r2(1 - f.cook / GRENADES[f.cooking].fuse) } : null,
       burning: f.burn > 0,
+      poisoned: f.poison > 0,
       asleep: f.sleep > 0,
       // Asleep: how far mashing has gone toward waking up (0..1), and the direction held (the
       // sleeper wiggles that way); null awake.
@@ -120,7 +121,11 @@ export function toView(world) {
     haven: world.haven && [r1(world.haven.left), r1(world.haven.right), world.haven.x, world.haven.y, world.haven.owner, r2(world.haven.held / GRENADES.banner.plant.hold), r2((world.haven.away ?? 0) / HAVEN.away)],
     crown: world.crown ?? -1,
     // Moving stage pieces: [y, there (1/0), about to change (1/0)].
-    movers: world.movers.map((m) => [r1(m.y), m.on ? 1 : 0, m.warn ? 1 : 0]),
+    movers: world.movers.map((m) => [r1(m.y), m.on ? 1 : 0, m.warn ? 1 : 0, r1(m.x ?? 0)]),
+    wind: world.wind,
+    vents: world.vents ?? [],
+    // Where the portals are now ([x, y] each), none if they're gone.
+    portals: (world.portalsAt ?? []).map((p) => [r1(p.x), r1(p.y)]),
     // (blink: an empty gun about to vanish.)
     pickups: world.pickups.map((p) => ({ id: p.id, x: p.x, y: p.y, weapon: p.weapon, blink: p.ammo === 0 && p.t > GUN_THROW.emptyLife - GUN_THROW.emptyBlink })),
     covers: world.covers.map((c) => (c.gone ? 0 : { hp: Math.ceil(c.hp), max: c.max, flash: c.flash > 0 })),

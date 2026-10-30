@@ -21,7 +21,10 @@ const BAR_TIME = 1.6; // seconds the HP bar stays up after a hit (fading out at 
 function buildOne(scene, b, i) {
   const parts = [];
   const boxes = [];
-  if (b.look === 'logs' && scene.textures.exists('village')) {
+  if (b.look === 'plant' && scene.textures.exists('retro-bush')) {
+    // A planter (Residencia), standing on its floor.
+    parts.push(scene.add.image(b.x + b.w / 2, b.y + b.h, 'retro-bush').setOrigin(0.5, 1).setDisplaySize(b.w + 4, b.h + 6));
+  } else if (b.look === 'logs' && scene.textures.exists('village')) {
     registerVillage(scene);
     for (let c = 0; c < b.w; c += 2 * TILE) parts.push(scene.add.image(b.x + c, b.y, 'village', 'logs').setOrigin(0, 0));
   } else if (b.look === 'metal' || !scene.textures.exists('cover-box')) {

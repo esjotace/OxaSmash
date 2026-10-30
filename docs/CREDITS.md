@@ -25,6 +25,11 @@ game uses are copied into `public/art/`.
 | Pixel Platformer Set (Szadi art) | Diamonds | Szadi art | Free to use, including commercially; credit appreciated; not to be sold as assets. |
 | PixelFood (Henry Software) | Apple, Drumstick | Henry Software | CC0. |
 | Controller and keyboard prompts (Vryell) | Controller button pictures (Xbox, PlayStation, Switch) | Vryell | Free to use in commercial projects; no reselling the assets. |
+| Free pixel food 16x16 (Alex) | The Shaken Soda (`soda_coke`) | Alex | CC BY 4.0: credit required (this line). |
+| Free Swamp Game Tileset (CraftPix) | El Pantano: ground, ledges, water, background layers, willows, trees, bushes, stones, logs (`public/art/swamp/`) | CraftPix.net | CraftPix free license: use in commercial and non-commercial games; no redistributing the files as they are. |
+| Legacy Dungeon (Anokolisa) | El Castillo: stone, brick, grass and dirt, window, banner, cage, chests, vases, sky and clouds (`public/art/castle/`; the sky and clouds also in Ciudad Retro) | Anokolisa | Free for commercial use; credit appreciated. |
+| GandalfHardcore FREE Platformer Assets | Pinar Nevado: snowy ground, winter background layers, pines, tents, campfire, portal, blizzard (`public/art/pines/`) | GandalfHardcore | Commercial and non-commercial games, may be modified; no reselling, repackaging or redistributing; no AI training or NFTs. |
+| Action Pack - CITY (Anokolisa) | Ciudad Retro: rooftops, brick and teal walls, windows, water towers, truss bridges, neon, AC unit, bench, fence, bin (`public/art/retro/`) | Anokolisa | Free for commercial use; credit appreciated. |
 | Pet Cats Pack | The Ring of Cat's six cats (`public/art/cats/`) | (see the pack's License.txt) | CC0: free for any use; credit appreciated. |
 | Tiny Heroes Animals | The polymorph potion's animals (`public/art/animals/`, side views) | (see the pack's README) | Share and adapt for any purpose, including commercially; credit required (this line). |
 | EazyD Fantasy RPG Item Icon Pack (v1.5) | Ring of Cat (the emerald ring), Polymorph Potion (the rainbow potion) | EazyD Studio | Use in personal and commercial games; no reselling, redistributing or sharing the files as an asset pack. |

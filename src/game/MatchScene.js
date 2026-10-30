@@ -2,6 +2,7 @@
 //   local  – this browser runs the rules (solo vs bots, or players sharing this screen)
 //   client – online: the game server's match, played here too, from the same start and inputs
 //            (rollback: see net/rollback.js)
+import { SCENERY_ART } from './scenery.js';
 import Phaser from 'phaser';
 import { COVER_ART } from './cover.js';
 import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE, CAT, ANIMALS } from '../sim/constants.js';
@@ -44,6 +45,11 @@ export function loadArt(scene) {
   if (!scene.textures.exists('dungeon-wood')) scene.load.image('dungeon-wood', 'art/dungeon/wood.png');
   // The night stages: the moon, and the night city's skyline layers (see night.js).
   for (const key of ['moon', 'city1', 'city2', 'city3', 'city4']) if (!scene.textures.exists(`night-${key}`)) scene.load.image(`night-${key}`, `art/night/${key}.png`);
+  // The painted stages' art (src/game/scenery.js).
+  for (const [theme, art] of Object.entries(SCENERY_ART)) {
+    for (const name of art.images) if (!scene.textures.exists(`${theme}-${name}`)) scene.load.image(`${theme}-${name}`, `art/${theme}/${name}.png`);
+    for (const [name, [w, h]] of Object.entries(art.sheets ?? {})) if (!scene.textures.exists(`${theme}-${name}`)) scene.load.spritesheet(`${theme}-${name}`, `art/${theme}/${name}.png`, { frameWidth: w, frameHeight: h });
+  }
   // Characters: idle (32x32 frames), run (64x64), and a single stun pose.
   for (const c of CHARACTERS) {
     if (scene.textures.exists(`${c}-idle`)) continue;

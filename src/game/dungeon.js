@@ -204,9 +204,16 @@ export function buildDungeon(scene, st) {
   out.push(glue);
   // Weapon shrines: banners either side of the altar.
   for (const sp of st.pickupSpots.filter((q) => q.shrine)) out.push(piece(scene, 'banner', sp.x - 40, sp.y - 64), piece(scene, 'banner', sp.x + 24, sp.y - 64));
-  // Spike walls: a stone column with spike tiles on the dangerous side. Spike floors: a stone row
-  // with spike tiles standing on it.
-  for (const s of st.spikes) {
+  out.push(...spikeArt(scene, st.spikes));
+  return out;
+}
+
+// Spike walls: a stone column with spike tiles on the dangerous side. Spike floors: a stone row
+// with spike tiles standing on it. (The castle uses them too.)
+export function spikeArt(scene, spikes) {
+  register(scene);
+  const out = [];
+  for (const s of spikes) {
     if (s.up) {
       for (let c = 0; c < s.width; c++) {
         out.push(piece(scene, 'spikeUp', s.x + c * TILE, s.y), piece(scene, 'stoneBlock', s.x + c * TILE, s.y + TILE));

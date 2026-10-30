@@ -135,7 +135,7 @@ function playerRow(name, colorIndex, tag) {
 // isn't a known stage.
 const stageFrom = (id) => (Object.hasOwn(STAGES, $(id).value) || $(id).value === MIXED ? $(id).value : DEFAULT_STAGE);
 // The stages every stage picker offers (the first one picked to start with).
-const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['dungeon', 'Dungeon'], ['village', 'Village'], ['warehouse', 'Warehouse'], ['bajaita', 'La Bajaita'], ['azotea', 'La Azotea']];
+const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['dungeon', 'Dungeon'], ['village', 'Village'], ['warehouse', 'Warehouse'], ['bajaita', 'La Bajaita'], ['azotea', 'La Azotea'], ['swamp', 'El Pantano'], ['castle', 'El Castillo'], ['pines', 'Pinar Nevado'], ['residencia', 'Residencia']];
 
 // extra: { rules, stormPace } for Same screen matches.
 function playLocal(roster, stocks, stage = MIXED, training = false, extra = {}) {
@@ -1097,7 +1097,7 @@ function renderDummies() {
   $('dumHealthValue').value = String(d.health.value);
   $('dumHealthValue').disabled = d.health.mode === 'normal';
   $('dumHealthAfter').value = String(d.health.after ?? 2);
-  $('dumHealthAfter').disabled = d.health.mode !== 'banded';
+  $('dumHealthAfterField').hidden = d.health.mode !== 'banded';
   $('dumLevel').value = d.level;
   $('dumAttack').checked = d.attack;
   $('dumMelee').checked = d.pickup.melee;

@@ -94,6 +94,7 @@ Each weapon has a **heavy** (the melee button: these numbers) and a **jab** (its
 | **Smoke** | 1.6 | a cloud, radius 80, for 9 s: nobody sees into it |
 | **Poison** | 1.6 | a cloud, radius 70, for 8 s: 3%/s to anyone inside, no stun |
 | **Drowsy Gas** | 1.6 | a cloud, radius 70, for 6 s: anyone inside goes drowsy (30% slower; asleep after 3 s unless they take damage or shake it off with jerky moves: turns, jumps, dashes, taps down; the same move again in a row counts for less) |
+| **Shaken Soda** | 3 | shake it (hold) up to 3 s: it bursts on the first thing it touches, from radius 40, 3 damage, push 160 + 1.5×% (no shaking) to radius 80, 18 damage, push 440 + 4.5×% (fully shaken, which is also when it bursts in your hand) |
 | **Polymorph Potion** | 1.4 | everyone within 64 px (you too) turns into a random animal for up to 3 s: they can walk and jump, nothing else; any damage, any status or a KO turns them back |
 | **Warp** | 1.4 | teleports you to where it goes off; hit someone on the way and you swap places |
 | **Sticky C4** | you choose | sticks to the first wall, floor or person it touches; press the grenade button again to set it off: radius 76, 14 damage, push 420 + 4.5×% |

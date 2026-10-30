@@ -1,6 +1,6 @@
 // The match rules, ported from the Godot build: movement, the 9mm (two magazines, auto-reload,
 // throw when empty), melee, cover, barrels, spike walls, the storm, lives. Plain JS, fixed ticks.
-import { CAT, ANIMALS, SLEEP, DROWSY, KO_CREDIT, CASH, LOOT, STYLE, COMBO, BUMP, COVER, DI, BREAKER, AMMO_CHEST, SLIME, FOOTHOLD, ITEMS, CARRY, HAVEN, LEGENDARY, WISH, CROWN, RADIATION, DT, FIGHTER as F, GRAVITY, JUMP_SPEED, AIR_JUMP_SPEED, GUNS, GUN_THROW, HOLD, ACCURACY, HEADSHOT, BLAST, GRENADE, GRENADES, DASH, GLUE, STAMINA, SWING_HAND, STRIKE, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, PICKUPS, BLOCK, DOOR, BARREL, SPIKES, STORM, RULES, TILE, MOVERS, ICE } from './constants.js';
+import { VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, KO_CREDIT, CASH, LOOT, STYLE, COMBO, BUMP, COVER, DI, BREAKER, AMMO_CHEST, SLIME, FOOTHOLD, ITEMS, CARRY, HAVEN, LEGENDARY, WISH, CROWN, RADIATION, DT, FIGHTER as F, GRAVITY, JUMP_SPEED, AIR_JUMP_SPEED, GUNS, GUN_THROW, HOLD, ACCURACY, HEADSHOT, BLAST, GRENADE, GRENADES, DASH, GLUE, STAMINA, SWING_HAND, STRIKE, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, PICKUPS, BLOCK, DOOR, BARREL, SPIKES, STORM, RULES, TILE, MOVERS, ICE } from './constants.js';
 import { getStage, DEFAULT_STAGE } from './stage.js';
 import { NEUTRAL } from './input.js';
 
@@ -34,7 +34,13 @@ export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.sto
     spikeCooldown: {},
     // Moving and changing stage pieces (see updateMovers): y, whether they're there (on), and
     // whether they're about to change (warn).
-    movers: (st.movers ?? []).map((m) => ({ y: m.kind === 'lift' ? m.bottom : m.kind === 'crusher' ? m.top : m.y, on: true, warn: false, t: -1 })),
+    movers: (st.movers ?? []).map((m) => ({ x: m.x, y: m.kind === 'lift' ? m.bottom : m.kind === 'crusher' ? m.top : m.y, on: true, warn: false, t: -1 })),
+    // The stage's weather and gadgets, for the renderer: the wind ({ dir, warn, on }) and which
+    // vents are about to puff.
+    wind: null,
+    vents: (st.vents ?? []).map(() => 0),
+    // The portals, where they are now (they move when the storm reaches one), or null.
+    portalsAt: st.portals ? st.portals.map((p) => ({ x: p.x, y: p.y })) : null,
     // Low cover: the stage's, each with its own health (see COVER); standing: the stage's blocks
     // with broken cover taken out.
     covers: [],
@@ -136,6 +142,7 @@ function createFighter(id, spawn, stocks, armed = true, startGrenades = 0) {
     onGlue: false, // standing on a glued floor
     burn: 0, // seconds left on fire
     burnBy: -1,
+    poison: 0, // seconds left poisoned (a gas vent)
     slip: 0, // seconds left slipping as if on ice (slapped with the fish)
     sleep: 0, // seconds left asleep (see SLEEP)
     drowsy: 0, // seconds left drowsy before falling asleep (see DROWSY)
@@ -242,6 +249,7 @@ export function step(world, inputs) {
   }
   const canAct = world.phase === 'play';
   updateMovers(world, st);
+  updateWind(world, st, canAct);
   updateFootholds(world, st);
   if (canAct) updateChains(world, st);
   for (const f of world.fighters) updateFighter(world, st, f, (canAct && inputs[f.id]) || NEUTRAL, canAct);
@@ -253,6 +261,8 @@ export function step(world, inputs) {
     updateSpikes(world, st);
     updateGrenades(world, st);
     updateAilments(world);
+    updateVents(world, st);
+    updatePortals(world, st);
     world.paints = world.paints.filter((p) => (p.t -= DT) > 0);
     world.puddles = world.puddles.filter((p) => (p.t -= DT) > 0);
     world.holes = world.holes.filter((h) => (h.t -= DT) > 0);
@@ -343,7 +353,7 @@ const headBottom = (v) => bodyRect(v).y + (HEADSHOT.height * bodyHeight(v)) / F.
 function besideCover(world, f) {
   const half = F.w / 2;
   return world.standing.some((b) => {
-    if (!b.cover || Math.abs(b.y + b.h - f.y) > 1) return false;
+    if (!(b.cover || b.lowCover) || Math.abs(b.y + b.h - f.y) > 1) return false;
     const gapRight = b.x - (f.x + half);
     const gapLeft = f.x - half - (b.x + b.w);
     return (gapRight >= 0 && gapRight <= F.tuckReach) || (gapLeft >= 0 && gapLeft <= F.tuckReach);
@@ -398,7 +408,7 @@ export function segmentHitsRect(ax, ay, bx, by, r) {
 // throughCover: low cover doesn't count (shots wear it down, so it's worth shooting through).
 export function lineOfSight(world, ax, ay, bx, by, throughCover = false) {
   if (inCloud(world, bx, by) || inCloud(world, ax, ay)) return false;
-  return !solids(world).some((r) => !(throughCover && r.cover) && segmentHitsRect(ax, ay, bx, by, r) !== null);
+  return !solids(world).some((r) => !(throughCover && (r.cover || r.lowCover)) && segmentHitsRect(ax, ay, bx, by, r) !== null);
 }
 
 // Is there floor (solid or thin, or a standing barrel) below this point within `depth`? Spikes
@@ -628,10 +638,10 @@ function move(world, f, input, press, control) {
     // Mid-dash: carried by the shove.
   } else if (dir !== 0) {
     const accel = f.grounded ? F.groundAccel * (icy ? ICE.accel : 1) : F.airAccel;
-    f.vx = approach(f.vx, dir * F.runSpeed * speedOf(world, f, glued), accel * DT);
+    f.vx = approach(f.vx, dir * F.runSpeed * speedOf(world, f, glued) + windDrift(world, f), accel * DT);
   } else {
     const drag = f.inHole ? 0 : f.grounded ? F.groundFriction * (icy ? ICE.friction : 1) : f.hitstun > 0 ? F.hitstunAirDrag : F.airFriction;
-    f.vx = approach(f.vx, 0, drag * DT);
+    f.vx = approach(f.vx, windDrift(world, f), drag * DT);
   }
 
   // Face where you aim; with no aim, face where you walk.
@@ -881,11 +891,15 @@ function fire(world, f, g, power = 1) {
     f.reload = g.reloadTime;
     world.events.push({ type: 'reload', id: f.id, x: f.x, y: f.y });
   }
-  // Muzzle jammed into a wall: the shot stops there.
+  // Muzzle jammed into a wall: the shot stops there. (Into a barrel or cover: like someone right up
+  // against you, it starts from your shoulder, so it hits them.)
   let blocked = null;
+  let against = false;
   for (const r of solids(world)) {
     const t = segmentHitsRect(o.x, o.y, mx, my, r);
-    if (t !== null && (!blocked || t < blocked)) blocked = t;
+    if (t === null) continue;
+    if (r.barrel || r.cover || r.lowCover) against = true;
+    else if (!blocked || t < blocked) blocked = t;
   }
   if (g.beam) return railBeam(world, f, g, o.x, o.y);
   if (blocked !== null) {
@@ -900,7 +914,7 @@ function fire(world, f, g, power = 1) {
   }
   // Someone right up against you, inside the barrel's reach: the shot starts from your shoulder,
   // so point-blank shots land instead of starting past them.
-  const pointBlank = world.fighters.some((v) => v !== f && v.state === 'ok' && v.hidden < 0 && segmentHitsRect(o.x, o.y, mx, my, bodyRect(v)) !== null);
+  const pointBlank = against || world.fighters.some((v) => v !== f && v.state === 'ok' && v.hidden < 0 && segmentHitsRect(o.x, o.y, mx, my, bodyRect(v)) !== null);
   const sx = pointBlank ? o.x : mx;
   const sy = pointBlank ? o.y : my;
   const spreadDegrees = spreadOf(f, g);
@@ -1219,7 +1233,8 @@ function updateLoot(world, st) {
       else m.vx = 0;
       const y = m.y + m.vy * DT;
       const floor = m.vy > 0 && floors.find((r) => m.x >= r.x && m.x <= r.x + r.w && m.y <= r.y && y >= r.y);
-      if (floor) Object.assign(m, { y: floor.y, landed: true, vx: 0, vy: 0 });
+      // (In a gust it keeps sliding along the floor.)
+      if (floor) Object.assign(m, { y: floor.y, landed: !world.wind?.on, vx: world.wind?.on ? m.vx : 0, vy: 0 });
       else m.y = y;
     }
     if (m.y > st.blast.bottom || m.t > LOOT.lie + LOOT.blink) return false;
@@ -2311,7 +2326,7 @@ function respawn(world, st, f) {
   const p = respawnPoint(world, st);
   Object.assign(f, { state: 'ok', hidden: -1, pendingLaunch: null, x: p.x, y: p.y, vx: 0, vy: 0, damage: 0, invincible: F.respawnInvincible, lastHitBy: -1, lastHitWith: null, lastHitAt: -1, lastPlayerHitAt: -1, jumpsLeft: F.airJumps, drop: 0, grounded: false, fastFall: false, cutting: false });
   rearm(f);
-  Object.assign(f, { burn: 0, bleed: 0, slip: 0, haste: 0, sleep: 0, drowsy: 0, shake: 0, rested: 0, cat: 0, catHurt: 0, animal: -1, animalT: 0, rune: null, runeT: 0, reflects: 0, wish: -1, jinx: 0, homing: 0, carryT: 0 });
+  Object.assign(f, { burn: 0, bleed: 0, slip: 0, haste: 0, poison: 0, sleep: 0, drowsy: 0, shake: 0, rested: 0, cat: 0, catHurt: 0, animal: -1, animalT: 0, rune: null, runeT: 0, reflects: 0, wish: -1, jinx: 0, homing: 0, carryT: 0 });
 }
 
 function checkGameOver(world) {
@@ -2447,8 +2462,10 @@ function useGrenade(world, f, input, press, control) {
 }
 
 function letGo(world, f, x, y, vx, vy, fuse) {
-  // (on: the fighter a C4 is stuck to, or -1; stuck: stuck to a wall or floor.)
-  world.grenades.push({ id: world.nextGrenade++, owner: f.id, kind: f.cooking, x, y, x0: x, y0: y, born: world.tick, vx, vy, fuse, on: -1, stuck: false });
+  // (on: the fighter a C4 is stuck to, or -1; stuck: stuck to a wall or floor; power: how long it
+  // was cooked, 0..1, for the soda.)
+  const power = Math.min(1, f.cook / GRENADES[f.cooking].fuse);
+  world.grenades.push({ id: world.nextGrenade++, owner: f.id, kind: f.cooking, x, y, x0: x, y0: y, born: world.tick, vx, vy, fuse, on: -1, stuck: false, power });
   f.cook = -1;
   f.cooking = null;
 }
@@ -2479,9 +2496,11 @@ function updateGrenades(world, st) {
     g.fuse -= DT;
     g.vy = Math.min(g.vy + t.gravity * DT, 600);
     g.x += g.vx * DT;
+    let bumped = false;
     if (walls.some((r) => overlaps(box(g), r))) {
       g.x -= g.vx * DT;
       g.vx = -g.vx * t.bounce;
+      bumped = true;
       if (remote) g.stuck = true;
     }
     const prevBottom = g.y + t.size / 2;
@@ -2498,8 +2517,11 @@ function updateGrenades(world, st) {
       else g.y -= g.vy * DT;
       g.vy = Math.abs(g.vy) < 60 ? 0 : -g.vy * t.bounce;
       g.vx *= t.friction;
+      bumped = true;
       if (remote) g.stuck = true;
     }
+    // (The soda bursts on the first thing it touches.)
+    if (GRENADES[g.kind].impact && (bumped || world.fighters.some((o) => o.id !== g.owner && o.state === 'ok' && o.hidden < 0 && overlaps(box(g), bodyRect(o))))) g.fuse = 0;
     if (remote) {
       const v = !g.stuck && world.fighters.find((o) => o.id !== g.owner && o.state === 'ok' && o.hidden < 0 && overlaps(box(g), bodyRect(o)));
       if (v) Object.assign(g, { on: v.id, ox: g.x - v.x, oy: g.y - v.y });
@@ -2539,6 +2561,11 @@ function detonate(world, st, g) {
   } else if (k.cloud) {
     world.clouds.push({ id: world.nextCloud++, kind: g.kind, x: at.x, y: at.y, r: k.cloud.radius, t: k.cloud.time, by: g.owner });
     world.events.push({ type: 'cloud', kind: g.kind, x: at.x, y: at.y });
+  } else if (k.soda) {
+    // As big as it was shaken.
+    const p = g.power ?? 0;
+    const e = Object.fromEntries(Object.keys(k.soda.max).map((key) => [key, k.soda.min[key] + (k.soda.max[key] - k.soda.min[key]) * p]));
+    blast(world, at, e, g.owner, null, 'soda', g.kind);
   } else if (k.polymorph) {
     world.events.push({ type: 'poof', x: at.x, y: at.y, r: k.polymorph.radius });
     for (const f of world.fighters) {
@@ -2565,6 +2592,10 @@ function updateAilments(world) {
     if (f.bleed > 0) {
       f.bleed = f.state === 'ok' ? Math.max(0, f.bleed - DT) : 0;
       chip(world, f, f.bleedRate * DT, f.bleedBy, true);
+    }
+    if (f.poison > 0) {
+      f.poison = f.state === 'ok' ? Math.max(0, f.poison - DT) : 0;
+      chip(world, f, VENT.poison.perSecond * DT, -1, true);
     }
     if (f.burn <= 0) continue;
     f.burn = f.state === 'ok' ? f.burn - DT : 0;
@@ -2602,7 +2633,7 @@ function unmorph(world, f) {
 // Any other status turns you back (a cat keeps through drowsiness and sleep); an animal also
 // turns back when its time is up.
 function morphTick(world, f) {
-  const status = f.burn > 0 || f.bleed > 0 || f.slip > 0 || f.jinx > 0 || f.stunned || !!f.pendingLaunch || (!f.cat && (f.drowsy > 0 || f.sleep > 0));
+  const status = f.burn > 0 || f.poison > 0 || f.bleed > 0 || f.slip > 0 || f.jinx > 0 || f.stunned || !!f.pendingLaunch || (!f.cat && (f.drowsy > 0 || f.sleep > 0));
   if (status || (f.animal >= 0 && (f.animalT -= DT) <= 0)) unmorph(world, f);
 }
 
@@ -2671,7 +2702,11 @@ function updateMovers(world, st) {
   st.movers.forEach((def, i) => {
     const m = world.movers[i];
     const oldY = m.y;
-    if (def.kind === 'bridge') {
+    const oldX = m.x ?? def.x;
+    if (def.kind === 'drift') {
+      const t = ((time + def.phase) % def.period) / def.period;
+      m.x = def.left + (def.right - def.left) * (0.5 - 0.5 * Math.cos(t * Math.PI * 2));
+    } else if (def.kind === 'bridge') {
       const c = MOVERS.bridge;
       const t = (time + def.phase) % (c.up + c.warn + c.open);
       m.on = t < c.up + c.warn;
@@ -2705,10 +2740,140 @@ function updateMovers(world, st) {
       m.warn = m.on && m.t >= 0;
     }
     const dy = m.y - oldY;
-    if (dy !== 0) for (const f of world.fighters) if (standingOn(f, def.x, oldY, def.w)) f.y = m.y;
-    if (m.on) live.push({ x: def.x, y: m.y, w: def.w, h: def.h, look: def.look, oneWay: !!def.oneWay, glue: !!def.glue, slack: Math.max(0, -dy) });
+    const x = m.x ?? def.x;
+    // (Whoever stands on it rides along.)
+    if (dy !== 0 || x !== oldX) {
+      for (const f of world.fighters) {
+        if (!standingOn(f, oldX, oldY, def.w)) continue;
+        f.y = m.y;
+        f.x += x - oldX;
+      }
+    }
+    if (m.on) live.push({ x, y: m.y, w: def.w, h: def.h, look: def.look, oneWay: !!def.oneWay, glue: !!def.glue, slack: Math.max(0, -dy) });
   });
   world.live = live;
+}
+
+// The wind (see WIND): gusts, the other way each time, each lasting its own while (the same on
+// every machine: it comes from which gust it is). People drift with it (windDrift); grenades and
+// money lying around are blown along.
+function updateWind(world, st, canAct) {
+  if (!st.wind) return;
+  const w = st.wind;
+  const time = world.tick * DT;
+  const n = Math.floor(time / w.every);
+  const t = time % w.every;
+  const [lo, hi] = WIND.gust;
+  const gust = lo + (((n * 7919) >>> 0) % 1000) / 1000 * (hi - lo);
+  const on = t >= w.every - gust;
+  const dir = n % 2 ? -1 : 1;
+  world.wind = { dir, on, warn: !on && t >= w.every - gust - WIND.warn };
+  if (!on || !canAct) return;
+  const blow = dir * WIND.things;
+  for (const g of world.grenades) if (!g.stuck && g.on < 0) g.vx = approach(g.vx, blow, 400 * DT);
+  for (const m of world.loot) {
+    m.landed = false;
+    m.vx = approach(m.vx, blow, 300 * DT);
+  }
+}
+
+// How fast the wind carries someone along right now (px/s; 0 with no gust).
+function windDrift(world, f) {
+  const w = world.wind;
+  if (!w?.on || f.hidden >= 0) return 0;
+  return w.dir * (f.grounded ? WIND.ground : WIND.air);
+}
+
+// Gas vents (see VENT): each puffs a poison cloud now and then, bubbling first.
+function updateVents(world, st) {
+  if (!st.vents) return;
+  const time = world.tick * DT;
+  st.vents.forEach((v, i) => {
+    const t = (time + v.phase) % v.every;
+    // (How far into the warning it is, 0..1: the rock shakes harder and harder.)
+    world.vents[i] = t >= v.every - VENT.warn ? (t - (v.every - VENT.warn)) / VENT.warn : 0;
+    if (t >= DT) return;
+    // A burst of gas: a quick cloud (looks only), a push away from it, and poison.
+    world.clouds.push({ id: world.nextCloud++, kind: 'vent', x: v.x, y: v.y - VENT.radius * 0.5, r: VENT.radius, t: 1.2, by: -1, perSecond: 0 });
+    world.events.push({ type: 'vent', x: v.x, y: v.y });
+    for (const f of world.fighters) {
+      const c = center(f);
+      const dx = c.x - v.x;
+      const dy = c.y - v.y;
+      if (f.state !== 'ok' || Math.hypot(dx, dy) > VENT.radius) continue;
+      using('vent');
+      if (hit(world, f, VENT.damage, Math.sign(dx) || 1, -0.7, VENT.knockback, VENT.knockbackGrowth, -1)) f.poison = VENT.poison.time;
+    }
+  });
+}
+
+// Portals (see PORTAL): in one, out the other. The storm reaching one moves them both.
+function updatePortals(world, st) {
+  if (!world.portalsAt) return;
+  const p = PORTAL;
+  const s = world.storm;
+  if (s && world.portalsAt.some((o) => o.x - p.w / 2 <= s.wallLeft || o.x + p.w / 2 >= s.wallRight)) {
+    movePortals(world, st);
+    if (!world.portalsAt) return;
+  }
+  const at = world.portalsAt;
+  for (const f of world.fighters) {
+    f.portalCd = Math.max(0, (f.portalCd ?? 0) - DT);
+    if (f.state !== 'ok' || f.portalCd > 0) continue;
+    // (Where the body was this tick and the last, so someone flying fast can't skip past one.)
+    const b = bodyRect(f);
+    const sweep = { x: b.x - Math.max(0, f.vx * DT), y: b.y - Math.max(0, f.vy * DT), w: b.w + Math.abs(f.vx * DT), h: b.h + Math.abs(f.vy * DT) };
+    const i = at.findIndex((o) => overlaps({ x: o.x - p.w / 2, y: o.y - p.h, w: p.w, h: p.h }, sweep));
+    if (i < 0) continue;
+    const to = at[i ^ 1];
+    if (!to) continue;
+    world.events.push({ type: 'portal', x: f.x, y: f.y - F.h / 2 });
+    Object.assign(f, { x: to.x, y: to.y, portalCd: p.cooldown, grounded: false });
+    world.events.push({ type: 'portal', x: f.x, y: f.y - F.h / 2 });
+  }
+}
+
+// The storm reached a portal: put both somewhere clear of it (see PORTAL), or nowhere if there's
+// no room left. Random, but the same on every machine (world.rng).
+function movePortals(world, st) {
+  const p = PORTAL;
+  const s = world.storm;
+  const lo = s.wallLeft + p.w;
+  const hi = s.wallRight - p.w;
+  const grounds = st.blocks
+    .filter((b) => !b.oneWay && !b.cover && b.w >= 64)
+    .map((b) => ({ x0: Math.max(b.x + p.w / 2, lo), x1: Math.min(b.x + b.w - p.w / 2, hi), y: b.y }))
+    .filter((g) => g.x1 > g.x0);
+  const length = grounds.reduce((n, g) => n + g.x1 - g.x0, 0);
+  if (!length || hi - lo < 2 * p.w) {
+    world.portalsAt = null;
+    world.events.push({ type: 'portalmove' });
+    return;
+  }
+  const onGround = () => {
+    let k = world.rng() * length;
+    for (const g of grounds) {
+      if (k <= g.x1 - g.x0) return { x: g.x0 + k, y: g.y };
+      k -= g.x1 - g.x0;
+    }
+    return { x: grounds[0].x0, y: grounds[0].y };
+  };
+  const apart = Math.min(p.apart, (hi - lo) / 2);
+  const a = onGround();
+  const inAir = world.rng() < 0.5;
+  let b = null;
+  for (let tries = 0; tries < 30 && !b; tries++) {
+    let c;
+    if (inAir) {
+      const g = onGround();
+      c = { x: g.x, y: g.y - 64 - world.rng() * (p.air - 64) };
+      // (Not inside anything.)
+      if ((world.live ?? st.blocks).some((r) => overlaps({ x: c.x - p.w / 2, y: c.y - p.h, w: p.w, h: p.h }, r))) c = null;
+    } else c = onGround();
+    if (c && Math.abs(c.x - a.x) >= apart) b = c;
+  }
+  world.portalsAt = [a, b ?? onGround()];
+  world.events.push({ type: 'portalmove' });
 }
 
 // A crusher that isn't falling: its spiked underside hurts like any spikes, pushing you down and

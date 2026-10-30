@@ -11,6 +11,7 @@ import { iconFrame } from './padicons.js';
 import { buildVillage, isVillage, VILLAGE_LOOKS } from './village.js';
 import { buildCovers, updateCovers } from './cover.js';
 import { buildNight, isNight, NIGHT_LOOKS } from './night.js';
+import { buildScenery, isScenery, SCENERY_LOOKS } from './scenery.js';
 import { koLine } from './kolines.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
@@ -137,6 +138,11 @@ export class Renderer {
       // The night stages: a starry sky, a floating slab or a rooftop (src/game/night.js).
       this.nightArt = buildNight(scene, fixed);
       layers.push(...this.nightArt);
+    } else if (isScenery(this.st)) {
+      // The painted stages: the swamp, the castle, the snowy pines, the retro city (src/game/scenery.js).
+      this.sceneryArt = buildScenery(scene, fixed, { dust: (x, y, size) => this.dust(x, y, size) });
+      this.moverArt = this.sceneryArt.movers;
+      layers.push(...this.sceneryArt);
     } else {
       const sky = scene.add.graphics();
       const back = scene.add.graphics();
@@ -213,7 +219,7 @@ export class Renderer {
     );
     // Asleep: "z.. zz.. zzz" over the sleeper, in light blue.
     this.zzz = roster.map(() => scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: '8px', fontStyle: 'bold', color: '#9fd8ff', stroke: '#0b0d18', strokeThickness: 2, resolution: this.res }).setOrigin(0, 1).setVisible(false));
-    this.world.add([...layers, this.g, ...this.blades, ...this.katanas, ...(this.guns ?? []), this.hands, ...(this.handImgs ?? []).flat(), ...this.heldNades, this.speed, ...this.tags, ...this.zzz, this.cloudG, this.fx, this.stormG, this.crossG]);
+    this.world.add([...layers, this.g, ...this.blades, ...this.katanas, ...(this.guns ?? []), this.hands, ...(this.handImgs ?? []).flat(), ...this.heldNades, ...(this.sceneryArt?.front ?? []), this.speed, ...this.tags, ...this.zzz, this.cloudG, this.fx, this.stormG, this.crossG]);
     // Training: hitboxes drawn over everything (see drawHitboxes; off unless switched on).
     this.showHitboxes = false;
     this.hitboxG = scene.add.graphics();
@@ -315,6 +321,16 @@ export class Renderer {
           this.rings.push({ x: e.x, y: e.y, r: 6, life: 0.25 });
           this.shake(0.6);
           break;
+        case 'soda': {
+          // A shaken soda bursting: dark brown smoke, foam and bubbles, as big as it was shaken.
+          const size = e.r / 64;
+          for (let k = 0; k < 7; k++) this.dust(e.x + (Math.random() * 2 - 1) * e.r * 0.5, e.y + (Math.random() * 2 - 1) * e.r * 0.35, size * (0.8 + Math.random() * 0.6), 0x3b2414);
+          this.burst(e.x, e.y, 0, 0, 22, 180 * size, C('#5a3418'), 60);
+          for (let k = 0; k < 24; k++) this.particles.push({ x: e.x + (Math.random() * 2 - 1) * e.r * 0.6, y: e.y + (Math.random() * 2 - 1) * e.r * 0.4, vx: (Math.random() * 2 - 1) * 20, vy: -20 - Math.random() * 50, life: 0.6 + Math.random() * 0.6, color: Math.random() < 0.6 ? C('#c79a5c') : C('#f3e2c0'), g: -30, s: 1 + Math.round(Math.random()) });
+          this.rings.push({ x: e.x, y: e.y, r: 6, life: 0.25 });
+          this.shake(0.3 + 0.4 * size);
+          break;
+        }
         case 'fireball':
           this.burst(e.x, e.y, 0, 0, 34, 200, C('#ff5a1f'), -60);
           this.burst(e.x, e.y, 0, 0, 20, 140, C('#ffd23f'), -90);
@@ -1022,9 +1038,9 @@ export class Renderer {
   }
 
   // A puff of dust (the smoke strip, tinted dusty), size: its scale.
-  dust(x, y, size) {
-    if (!this.scene.textures.exists('fx-smoke')) return this.burst(x, y, 0, -1, 4, 40, C('#b8a58a'), 0, 1.4);
-    const img = this.scene.add.sprite(x, y, 'fx-smoke', 0).setScale(size).setTint(0xb8a58a).setAlpha(0.85).setFlipX(Math.random() < 0.5);
+  dust(x, y, size, tint = 0xb8a58a) {
+    if (!this.scene.textures.exists('fx-smoke')) return this.burst(x, y, 0, -1, 4, 40, tint, 0, 1.4);
+    const img = this.scene.add.sprite(x, y, 'fx-smoke', 0).setScale(size).setTint(tint).setAlpha(0.85).setFlipX(Math.random() < 0.5);
     this.world.add(img);
     this.puffs.push({ img, age: 0, frames: this.scene.textures.get('fx-smoke').frameTotal - 1, fps: 14 });
   }
@@ -1032,7 +1048,7 @@ export class Renderer {
   // Each cloud keeps spawning puffs (animated strips that swell and dissolve) at random spots in it,
   // so it churns; when a cloud is gone its last puffs play out.
   updatePuffs(view, dt) {
-    const LOOKS = { smoke: { every: 0.035, size: 1.6, alpha: 0.95 }, poison: { every: 0.07, size: 1.4, alpha: 0.6 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 }, drowsy: { every: 0.06, size: 1.4, alpha: 0.6 } };
+    const LOOKS = { smoke: { every: 0.035, size: 1.6, alpha: 0.95 }, poison: { every: 0.07, size: 1.4, alpha: 0.6 }, vent: { every: 0.03, size: 1.1, alpha: 0.8 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 }, drowsy: { every: 0.06, size: 1.4, alpha: 0.6 } };
     const live = new Set();
     for (const c of view.clouds ?? []) {
       live.add(c.id);
@@ -1118,6 +1134,7 @@ export class Renderer {
     }
     updateCovers(this.covers, view, this.g, dt, (x, y, size) => this.dust(x, y, size));
     this.nightArt?.update(this.scene.cameras.main);
+    this.sceneryArt?.update(this.scene.cameras.main, view, this.anim);
     if (this.moverArt && view.movers) {
       view.movers.forEach((m, i) => this.moverArt[i]?.update(m, this.anim));
     }
@@ -1623,8 +1640,15 @@ export class Renderer {
     // Cooking a grenade: held up in the free hand toward the aim, flashing as its fuse runs out.
     const nade = this.heldNades[i];
     if (f.cooking && !f.hidden && this.scene.textures.exists(f.cooking.kind)) {
-      const nx = ox + Math.cos(ang) * 6 - fc * 3;
-      const ny = oy + Math.sin(ang) * 6 - 6;
+      let nx = ox + Math.cos(ang) * 6 - fc * 3;
+      let ny = oy + Math.sin(ang) * 6 - 6;
+      // (The soda: shaken in the hand, harder as it builds up, fizzing.)
+      if (f.cooking.kind === 'soda') {
+        const k = 1 - f.cooking.left;
+        nx += Math.sin(this.anim * 70) * (1 + 2.5 * k);
+        ny += Math.cos(this.anim * 53) * (1 + 1.5 * k);
+        if (Math.random() < 0.2 + 0.6 * k) this.particles.push({ x: nx, y: ny - 5, vx: (Math.random() * 2 - 1) * 15, vy: -25 - Math.random() * 30, life: 0.35, color: Math.random() < 0.5 ? C('#c79a5c') : C('#f3e2c0'), g: 40, s: 1 });
+      }
       nade.setTexture(f.cooking.kind).setVisible(true).setPosition(Math.round(nx), Math.round(ny)).setAlpha(a);
       if (f.cooking.left < 0.3 && Math.floor(this.anim * 14) % 2 === 0) nade.setTint(0xff4040).setTintMode(Phaser.TintModes.FILL);
       else nade.clearTint();
@@ -1656,6 +1680,10 @@ export class Renderer {
     // Bleeding (the cleaver): drops of blood falling off.
     if (f.bleeding && Math.random() < 0.25) {
       this.particles.push({ x: x + (Math.random() * 2 - 1) * 5, y: y - 12 - Math.random() * 14, vx: 0, vy: 10, life: 0.5, color: C('#b3122e'), g: 300, s: 2 });
+    }
+    // Poisoned (a gas vent): green flames, like burning.
+    if (f.poisoned && Math.random() < 0.5) {
+      this.particles.push({ x: x + (Math.random() * 2 - 1) * 6, y: y - Math.random() * 30, vx: (Math.random() * 2 - 1) * 10, vy: -35 - Math.random() * 25, life: 0.35, color: Math.random() < 0.5 ? C('#7bd12e') : C('#c6ff6a'), g: -40, s: 2 });
     }
     // On fire: flames lick up off the body.
     if (f.burning && Math.random() < 0.6) {
@@ -2149,7 +2177,7 @@ function drawBlocks(g, st, kitFacades = new Set()) {
   for (const b of st.blocks) if (b.look === 'scaffold') drawScaffold(g, st, b);
   for (const b of st.blocks) {
     const { x, y, w, h } = b;
-    if (VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look) || NIGHT_LOOKS.has(b.look)) continue;
+    if (VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look) || NIGHT_LOOKS.has(b.look) || SCENERY_LOOKS.has(b.look)) continue;
     // (Thin platforms are wood, on every stage; solid ones stone, concrete or metal.)
     if (b.look === 'balcony') {
       // Balcony: a metal railing behind you, a wooden deck, metal brackets under it.
@@ -2190,8 +2218,8 @@ function drawBlocks(g, st, kitFacades = new Set()) {
       }
     }
   }
-  for (const s of isDungeon(st) ? [] : st.spikes) {
-    // (The dungeon draws its spike walls from its own tiles.)
+  for (const s of isDungeon(st) || st.theme === 'castle' ? [] : st.spikes) {
+    // (The dungeon and the castle draw their spike walls from the dungeon's tiles.)
     const h = s.height * TILE;
     g.fillStyle(C('#39405e'), 1).fillRect(s.x, s.y, TILE, h);
     g.lineStyle(1, C('#232839'), 1).strokeRect(s.x + 0.5, s.y + 0.5, TILE - 1, h - 1);
