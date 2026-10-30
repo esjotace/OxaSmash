@@ -114,7 +114,9 @@ function load() {
   // (Older saves had one character and one controller layout: they go to the first slots.)
   if (typeof saved.character === 'string' && !saved.devices) devices.kbm.character = saved.character;
   if (saved.pad && !saved.devices) devices.pad0.pad = { ...DEFAULT_PAD, ...saved.pad };
-  return { volume: { master: 0.8, effects: 1, announcer: 1, ...saved.volume }, keys: { ...DEFAULT_KEYS, ...saved.keys }, devices };
+  // graphics: how sharp the game is drawn ('auto', 'sharp' or 'fast'; see RENDER_SCALE in game.js).
+  const graphics = ['auto', 'sharp', 'fast'].includes(saved.graphics) ? saved.graphics : 'auto';
+  return { volume: { master: 0.8, effects: 1, announcer: 1, ...saved.volume }, keys: { ...DEFAULT_KEYS, ...saved.keys }, devices, graphics };
 }
 
 export const settings = load();

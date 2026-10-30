@@ -1139,6 +1139,7 @@ function runPadLive() {
 function refreshMenu() {
   runPadLive();
   for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['volAnnouncer', 'announcer']]) $(id).value = settings.volume[key];
+  $('graphics').value = settings.graphics;
   renderCharacter();
   renderBindings();
   renderTraining();
@@ -1273,6 +1274,14 @@ function dummiesChanged() {
 for (const id of ['dumStage', 'dumCount', 'dumLevel', 'dumAttack', 'dumMelee', 'dumGun', 'dumGrenade', 'dumHealth', 'dumHealthValue', 'dumHealthAfter']) $(id).onchange = dummiesChanged;
 
 // Volumes: saved and heard right away.
+// Graphics: how sharp the game is drawn (see RENDER_SCALE in game/game.js). The canvas is sized once,
+// so a change applies the next time the page loads.
+$('graphics').onchange = () => {
+  settings.graphics = $('graphics').value;
+  saveSettings();
+  $('graphicsNote').textContent = 'Applies the next time the game loads (reload the page).';
+};
+
 for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['volAnnouncer', 'announcer']]) {
   $(id).oninput = () => {
     settings.volume[key] = Number($(id).value);

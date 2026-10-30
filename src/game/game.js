@@ -2,17 +2,25 @@
 import Phaser from 'phaser';
 import { MatchScene, loadArt } from './MatchScene.js';
 import { VIEW_W, VIEW_H } from '../sim/constants.js';
+import { settings } from './settings.js';
 
 let game = null;
 
 // The game is laid out in a 640×360 view, but drawn at a whole multiple of it (RENDER_SCALE): big
 // enough to cover the window at the screen's real pixel density, so pixel art stays square and
-// text stays sharp. The cameras zoom by the same factor. If the canvas still doesn't match the
-// window exactly, the browser shrinks it slightly and smoothly (see style.css).
-export const RENDER_SCALE = Math.max(
-  1,
-  Math.min(4, Math.ceil(Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H) * (window.devicePixelRatio || 1))),
-);
+// text stays sharp. The cameras zoom by the same factor. If the canvas doesn't match the window
+// exactly, the browser shrinks it slightly and smoothly; if it's capped below the window (see
+// SCALE_CAP), the browser enlarges it with square pixels (see UPSCALED and style.css).
+// Most multiples, by the Graphics setting: 'sharp' up to 4x; 'fast' (slower computers) 2x; 'auto'
+// 4x, but 3x on phones and tablets (a touch screen with no mouse), about their screens' real
+// resolution, for battery and heat. (?scale=N in the address forces a multiple, for measuring.)
+const NEEDED = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H) * (window.devicePixelRatio || 1);
+const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+const SCALE_CAP = { sharp: 4, fast: 2, auto: TOUCH ? 3 : 4 }[settings.graphics] ?? 4;
+const FORCED = Number(new URLSearchParams(location.search).get('scale')) | 0;
+export const RENDER_SCALE = FORCED >= 1 && FORCED <= 4 ? FORCED : Math.max(1, Math.min(SCALE_CAP, Math.ceil(NEEDED)));
+// Drawn smaller than the window (enlarged to fit it).
+export const UPSCALED = RENDER_SCALE < NEEDED;
 
 // The Phaser game, made the first time it's needed.
 function ensureGame() {
@@ -30,6 +38,7 @@ function ensureGame() {
       scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
       scene: [],
     });
+    if (UPSCALED) document.getElementById('game')?.classList.add('upscaled');
     game.scene.add('match', MatchScene, false);
     game.scene.add('warm', { key: 'warm', preload() { loadArt(this); } }, false);
     // Local dev server only (not in builds): lets test scripts inspect the running game.

@@ -51,6 +51,11 @@ body {
   image-rendering: auto !important;
 }
 
+/* Drawn smaller than the window (the Graphics setting's cap): enlarged with square pixels, not blurred. */
+#game.upscaled canvas {
+  image-rendering: pixelated !important;
+}
+
 .screen {
   position: fixed;
   inset: 0;

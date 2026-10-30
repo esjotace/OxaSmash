@@ -125,6 +125,13 @@ export function perfMachine(game, renderScale) {
     window: `${innerWidth}x${innerHeight}`,
     pixelRatio: devicePixelRatio,
     renderScale: renderScale,
+    graphics: (() => {
+      try {
+        return JSON.parse(localStorage.getItem('oxasmash-settings') ?? '{}').graphics ?? 'auto';
+      } catch {
+        return '?';
+      }
+    })(),
     canvas: `${game.canvas?.width}x${game.canvas?.height}`,
     renderer: game.renderer?.gl ? 'WebGL' : 'Canvas',
     gpu,
