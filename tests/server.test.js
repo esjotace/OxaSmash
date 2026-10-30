@@ -1,6 +1,6 @@
 // The game server's rooms (server/room.js), driven directly: no network, time passed in.
 import { describe, it, expect } from 'vitest';
-import { Room } from '../server/room.js';
+import { Room, IDLE_MS } from '../server/room.js';
 import { RULES } from '../src/sim/constants.js';
 import { encodeInput, NEUTRAL } from '../src/sim/input.js';
 
@@ -144,6 +144,178 @@ describe('game server rooms', () => {
     expect(a.last('start').duel).toBe('gentleman');
     expect(b.last('start').you).toBe(-1); // watching
     expect(room.match.world.fighters.every((f) => !f.hasGun)).toBe(true);
+  });
+
+  it('guests suggest a stage and rules (the owner decides); suggestions clear when a match starts', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    // A guest can't change the rules...
+    room.receive(b.i, { t: 'rules', rules: { stocks: 1 } }, 0);
+    expect(a.last('lobby').rules.stocks).toBe(RULES.stocks);
+    // ...but can suggest (checked: a stage that doesn't exist is dropped).
+    room.receive(b.i, { t: 'suggest', stage: 'castle', preset: 'grenades' }, 0);
+    expect(a.last('lobby').players[b.i].suggest).toEqual({ stage: 'castle', preset: 'grenades' });
+    room.receive(b.i, { t: 'suggest', stage: 'nowhere', preset: 'shootout' }, 0);
+    expect(a.last('lobby').players[b.i].suggest).toEqual({ stage: null, preset: 'shootout' });
+    // (The owner doesn't suggest: they set the rules.)
+    room.receive(a.i, { t: 'suggest', preset: 'beatdown' }, 0);
+    expect(a.last('lobby').players[a.i].suggest).toBe(null);
+    room.receive(a.i, { t: 'start' }, 0);
+    expect(room.players[b.i].suggest).toBe(null);
+  });
+
+  it('a rematch is an invite: 30 s to accept or sit out; everyone in: 10 s, or now if the owner says', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    const c = person(room, 'Caro');
+    room.receive(a.i, { t: 'start' }, 0);
+    room.matchOver(room.match, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    expect(b.last('rematch').r.invited).toEqual([b.i, c.i]);
+    expect(b.last('rematch').r.left).toBe(30);
+    // Beto accepts, Caro sits it out: when the time's up, Caro watches.
+    room.receive(b.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(c.i, { t: 'rematchAnswer', yes: false }, 0);
+    let t = run(room, 0, 29);
+    expect(room.phase).toBe('results');
+    t = run(room, t, 1.2);
+    expect(room.phase).toBe('match');
+    expect(room.match.slots).toEqual([a.i, b.i]);
+    expect(c.last('start').you).toBe(-1);
+    // Next time everyone's in at once: 10 s left, and the owner can start it now.
+    room.matchOver(room.match, t);
+    room.receive(a.i, { t: 'again' }, t);
+    room.receive(b.i, { t: 'rematchAnswer', yes: true }, t);
+    room.receive(c.i, { t: 'rematchAnswer', yes: true }, t);
+    expect(b.last('rematch').r.allIn).toBe(true);
+    expect(b.last('rematch').r.left).toBe(10);
+    room.receive(a.i, { t: 'rematchNow' }, t);
+    expect(room.phase).toBe('match');
+  });
+
+  it('duels go on during a rematch invite, and the rematch waits for them', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    const c = person(room, 'Caro');
+    room.receive(a.i, { t: 'start' }, 0);
+    room.matchOver(room.match, 0);
+    // A challenge waiting: the owner can't offer a rematch.
+    room.receive(b.i, { t: 'duel', a: 'invite', to: c.i }, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    expect(room.rematch).toBe(null);
+    room.receive(b.i, { t: 'duel', a: 'cancel', to: c.i }, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    expect(room.rematch).not.toBe(null);
+    // Both accept the rematch, then Beto still challenges Caro: the rematch waits past its time.
+    room.receive(b.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(c.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(b.i, { t: 'duel', a: 'invite', to: c.i }, 0);
+    expect(room.duels.invites.length).toBe(1);
+    let t = run(room, 0, 31);
+    expect(room.phase).toBe('results');
+    expect(a.last('rematch').r.duels).toBe(true);
+    // Caro says no: no duels on, the rematch goes ahead.
+    room.receive(c.i, { t: 'duel', a: 'decline', from: b.i }, t);
+    t = run(room, t, 0.1);
+    expect(room.phase).toBe('match');
+  });
+
+  it("no answer to a rematch invite: you watch it (and you're invited to the next one)", () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    const c = person(room, 'Caro');
+    room.receive(a.i, { t: 'start' }, 0);
+    room.matchOver(room.match, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    room.receive(b.i, { t: 'rematchAnswer', yes: true }, 0);
+    let t = run(room, 0, 31);
+    expect(room.match.slots.map((i) => room.players[i].name)).toEqual(['Ana', 'Beto']);
+    // Caro watched that one; the next invite is hers too.
+    room.matchOver(room.match, t);
+    room.receive(a.i, { t: 'again' }, t);
+    expect(c.last('rematch').r.invited).toContain(c.i);
+  });
+
+  it("someone spectating the duels is asked too, and can accept without stopping", () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    const e = person(room, 'Eli');
+    room.receive(a.i, { t: 'start' }, 0);
+    room.matchOver(room.match, 0);
+    room.receive(e.i, { t: 'duel', a: 'spectate', on: true }, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    expect(e.last('rematch').r.invited).toContain(e.i);
+    room.receive(b.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(e.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(a.i, { t: 'rematchNow' }, 0);
+    expect(room.match.slots.map((i) => room.players[i].name)).toEqual(['Ana', 'Beto', 'Eli']);
+  });
+
+  it('lobby: ready, votes on suggestions, private rooms, handing over the room', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    const c = person(room, 'Caro');
+    room.receive(b.i, { t: 'lobbyReady', on: true }, 0);
+    expect(a.last('lobby').players[b.i].ready).toBe(true);
+    room.receive(b.i, { t: 'suggest', preset: 'grenades' }, 0);
+    room.receive(c.i, { t: 'vote', i: b.i }, 0);
+    expect(a.last('lobby').players[b.i].votes).toBe(1);
+    expect(c.last('lobby').players[b.i].voted).toBe(true);
+    room.receive(b.i, { t: 'vote', i: b.i }, 0); // (not your own)
+    expect(a.last('lobby').players[b.i].votes).toBe(1);
+    room.receive(a.i, { t: 'private', on: true }, 0);
+    expect(room.summary().private).toBe(true);
+    room.receive(a.i, { t: 'giveOwner', i: c.i }, 0);
+    expect(c.last('lobby').owner).toBe(true);
+    expect(b.last('notice').text).toContain('Caro');
+  });
+
+  it('when the owner leaves, the room goes to whoever joined first', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana', 0);
+    const b = person(room, 'Beto', 5);
+    const c = person(room, 'Caro', 10);
+    room.leave(a.i, 20);
+    expect(b.last('lobby').owner).toBe(true);
+    expect(c.last('notice').text).toContain('Beto');
+  });
+
+  it('an idle seat in the lobby goes to whoever is waiting', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana', 0);
+    const others = ['Beto', 'Caro', 'Dani', 'Eli', 'Fer', 'Gus'].map((n) => person(room, n, 0));
+    const waiting = others.at(-1);
+    expect(waiting.last('lobby').players.at(-1).watching).toBe(true);
+    // Everyone but Beto does something now and then.
+    for (const p of [a, ...others.slice(1)]) room.receive(p.i, { t: 'lobbyReady', on: true }, IDLE_MS - 1000);
+    room.update(IDLE_MS + 1000);
+    const names = waiting.last('lobby').players;
+    expect(names.find((p) => p.name === 'Beto').watching).toBe(true);
+    expect(names.find((p) => p.name === 'Gus').watching).toBe(false);
+  });
+
+  it('player rotation: Pass the Crown sits the best player out for whoever is waiting', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    room.receive(a.i, { t: 'rules', rules: { rotation: 'crown' } }, 0);
+    const others = ['Beto', 'Caro', 'Dani', 'Eli', 'Fer', 'Gus'].map((n) => person(room, n, 0));
+    room.receive(a.i, { t: 'start' }, 0);
+    // Beto did best.
+    room.match.world.fighters.forEach((f, k) => Object.assign(f, { stocks: k === 1 ? 3 : 0, kos: k === 1 ? 5 : 0 }));
+    room.matchOver(room.match, 0);
+    room.receive(a.i, { t: 'again' }, 0);
+    for (const p of others.slice(0, 5)) room.receive(p.i, { t: 'rematchAnswer', yes: true }, 0);
+    room.receive(a.i, { t: 'rematchNow' }, 0);
+    expect(room.phase).toBe('match');
+    const playing = room.match.slots.map((i) => room.players[i].name);
+    expect(playing).not.toContain('Beto');
+    expect(playing).toContain('Gus');
   });
 
   it('in a series, the duels only open once it is decided', () => {

@@ -91,7 +91,8 @@ wss.on('connection', (ws) => {
     if (!room) {
       // The room list (the Online menu asks every few seconds; s: its clock, sent back for its ping).
       if (msg.t === 'list') {
-        const list = [...rooms.values()].map((r) => r.summary());
+        // (Private rooms aren't listed: they're joined by code.)
+        const list = [...rooms.values()].map((r) => r.summary()).filter((r) => !r.private);
         return send({ t: 'rooms', s: msg.s, rooms: list.sort((a, b) => (a.ping ?? Infinity) - (b.ping ?? Infinity)) });
       }
       // The first message: make a room, or join one by its code.

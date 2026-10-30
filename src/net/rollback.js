@@ -10,6 +10,7 @@
 //   - Every so often the server sends a fingerprint of its world; if this copy has drifted (it
 //     shouldn't), the server's whole world is loaded instead (`load`).
 // Bots are the server's: their inputs come in like everyone else's. Plain JS, no Phaser.
+import { perfStep } from '../game/perf.js';
 import { createWorld, step, removeFighter, attachRng } from '../sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../sim/input.js';
 import { STORM_PACE, DT } from '../sim/constants.js';
@@ -164,6 +165,7 @@ export class Rollback {
     this.used.set(t, inputs.map(encodeKey));
     for (const f of this.confirmed.get(t)?.outs ?? []) removeFighter(this.world, f);
     step(this.world, inputs);
+    perfStep();
     // Effects and sounds: each once, even if the tick is played again.
     const fresh = this.world.events.filter((e) => {
       const key = `${t}|${e.type}|${e.id ?? ''}|${e.by ?? ''}|${e.weapon ?? e.kind ?? ''}`;

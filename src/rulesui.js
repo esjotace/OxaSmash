@@ -91,6 +91,10 @@ export function rulesPicker(prefix, storeKey, onChange = () => {}) {
   }
 
   return {
+    // Pick a preset, as if clicked.
+    set(key) {
+      pick(key, true);
+    },
     // The rules as picked: what's in play (the preset's, or the custom switches), and the preset.
     read() {
       const rules = preset === 'custom' ? Object.fromEntries(SWITCHES.map((s) => [s, $(cap(s)).checked])) : presetRules(preset);

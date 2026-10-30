@@ -25,6 +25,11 @@
   box-sizing: border-box;
 }
 
+/* Hidden means hidden, whatever the element's own display (rows and fields are flex and grid). */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -329,6 +334,17 @@ summary:focus-visible {
 
 .btn.primary:hover {
   filter: brightness(1.08);
+}
+
+/* The lobby's Start when everyone's ready: a gentle pulse. */
+.btn.all-ready {
+  animation: ready-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ready-pulse {
+  50% {
+    box-shadow: 0 0 0 4px rgba(255, 93, 115, 0.35);
+  }
 }
 
 .btn.ghost {

@@ -598,8 +598,9 @@ export class Renderer {
     // Same typing speeds the rules use, so the 100% launch lands as the last letter does.
     const cps = big ? MELEE.keyboard.bigTypeSpeed : MELEE.keyboard.typeSpeed;
     const typing = chars / cps;
-    const g = this.scene.add.graphics();
-    this.world.add(g);
+    // (A spare drawing surface if there is one.)
+    const g = this.wordPile?.pop()?.setVisible(true) ?? this.scene.add.graphics();
+    if (!g.parentContainer && !this.world.exists(g)) this.world.add(g);
     const top = e.y - 16 - lines.length * LINE * scale;
     this.words.push({ g, lines, x: e.x, y: top, scale, big, chars, cps, age: 0, total: typing + (big ? 1.4 : 0.8) });
     if (big) {
@@ -613,7 +614,8 @@ export class Renderer {
     this.words = this.words.filter((w) => {
       w.age += dt;
       if (w.age >= w.total) {
-        w.g.destroy();
+        w.g.clear().setVisible(false);
+        (this.wordPile ??= []).push(w.g);
         return false;
       }
       w.y -= dt * (w.big ? 6 : 10);
@@ -760,7 +762,7 @@ export class Renderer {
     this.ghosts = this.ghosts.filter((gh) => {
       gh.life -= dt;
       if (gh.life <= 0) {
-        gh.img.destroy();
+        this.recycle('ghost', gh.img);
         return false;
       }
       gh.img.setAlpha(0.55 * (gh.life / 0.25));
@@ -950,11 +952,32 @@ export class Renderer {
     }
   }
 
+  // Short-lived sprites (puffs, dust, dash afterimages) come from a spare pile and go back to it
+  // when they're done, instead of being made and thrown away every time (which makes the browser
+  // stop now and then to clean up). kind: which pile; at: where in the world layer (default: on
+  // top). Comes back reset: visible, no tint, not flipped, scale 1, centred.
+  spare(kind, key, frame, x, y, at) {
+    const pile = ((this.piles ??= {})[kind] ??= []);
+    let o = pile.pop();
+    if (o) {
+      this.world.remove(o);
+      o.setTexture(key, frame).setPosition(x, y).setVisible(true).setAlpha(1).setScale(1).setOrigin(0.5).setFlipX(false).clearTint().setTintMode(Phaser.TintModes.MULTIPLY);
+    } else o = this.scene.add.sprite(x, y, key, frame);
+    if (at === undefined) this.world.add(o);
+    else this.world.addAt(o, at);
+    return o;
+  }
+
+  // Done with a spare sprite: hidden, back on its pile.
+  recycle(kind, o) {
+    o.setVisible(false);
+    ((this.piles ??= {})[kind] ??= []).push(o);
+  }
+
   // An animation that plays once where something happened (the chest opening), then goes.
   playOnce(key, x, y, fps) {
     if (!this.scene.textures.exists(key)) return;
-    const img = this.scene.add.sprite(x, y, key, 0).setOrigin(0.5, 1);
-    this.world.addAt(img, this.world.getIndex(this.cloudG));
+    const img = this.spare('puff', key, 0, x, y, this.world.getIndex(this.cloudG)).setOrigin(0.5, 1);
     this.puffs.push({ img, age: 0, frames: this.scene.textures.get(key).frameTotal - 1, fps, hold: 0.6 });
   }
 
@@ -1040,15 +1063,15 @@ export class Renderer {
   // A puff of dust (the smoke strip, tinted dusty), size: its scale.
   dust(x, y, size, tint = 0xb8a58a) {
     if (!this.scene.textures.exists('fx-smoke')) return this.burst(x, y, 0, -1, 4, 40, tint, 0, 1.4);
-    const img = this.scene.add.sprite(x, y, 'fx-smoke', 0).setScale(size).setTint(tint).setAlpha(0.85).setFlipX(Math.random() < 0.5);
-    this.world.add(img);
+    const img = this.spare('puff', 'fx-smoke', 0, x, y).setScale(size).setTint(tint).setAlpha(0.85).setFlipX(Math.random() < 0.5);
     this.puffs.push({ img, age: 0, frames: this.scene.textures.get('fx-smoke').frameTotal - 1, fps: 14 });
   }
 
   // Each cloud keeps spawning puffs (animated strips that swell and dissolve) at random spots in it,
   // so it churns; when a cloud is gone its last puffs play out.
   updatePuffs(view, dt) {
-    const LOOKS = { smoke: { every: 0.035, size: 1.6, alpha: 0.95 }, poison: { every: 0.07, size: 1.4, alpha: 0.6 }, vent: { every: 0.03, size: 1.1, alpha: 0.8 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 }, drowsy: { every: 0.06, size: 1.4, alpha: 0.6 } };
+    // (Fewer, bigger puffs: stacked see-through sprites are what weak graphics chips struggle with.)
+    const LOOKS = { smoke: { every: 0.07, size: 2.1, alpha: 0.95 }, poison: { every: 0.13, size: 1.8, alpha: 0.65 }, vent: { every: 0.06, size: 1.4, alpha: 0.8 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 }, drowsy: { every: 0.12, size: 1.8, alpha: 0.65 } };
     const live = new Set();
     for (const c of view.clouds ?? []) {
       live.add(c.id);
@@ -1061,10 +1084,9 @@ export class Renderer {
         const a = Math.random() * Math.PI * 2;
         const d = Math.sqrt(Math.random()) * c.r * 0.6;
         const scale = ((c.r * look.size) / 64) * (0.7 + Math.random() * 0.5);
-        const img = this.scene.add.sprite(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.7, key, 0).setScale(scale).setAlpha(look.alpha * Math.min(1, c.t / 1.5)).setFlipX(Math.random() < 0.5);
+        const img = this.spare('puff', key, 0, c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.7, this.world.getIndex(this.cloudG) + 1).setScale(scale).setAlpha(look.alpha * Math.min(1, c.t / 1.5)).setFlipX(Math.random() < 0.5);
         if (c.kind === 'smoke') img.setTint(0xc4c6d0);
         else if (c.kind === 'drowsy') img.setTint(0xffb8dc);
-        this.world.addAt(img, this.world.getIndex(this.cloudG) + 1);
         this.puffs.push({ img, age: 0, frames: this.scene.textures.get(key).frameTotal - 1, fps: c.kind === 'spore' ? 10 : 9 });
       }
       this.cloudSpawn.set(c.id, next);
@@ -1079,7 +1101,7 @@ export class Renderer {
           p.img.setAlpha(Math.min(1, p.hold * 3));
           return true;
         }
-        p.img.destroy();
+        this.recycle('puff', p.img);
         return false;
       }
       p.img.setFrame(frame);
@@ -1334,9 +1356,8 @@ export class Renderer {
     // Dashing: leave afterimages in the player's color behind.
     if (f.dashing && this.anim - (this.lastGhost?.[i] ?? -1) > 0.03) {
       (this.lastGhost ??= [])[i] = this.anim;
-      const img = this.scene.add.image(s.x, s.y, s.texture.key, s.frame.name).setOrigin(s.originX, s.originY).setFlipX(s.flipX).setScale(s.scaleX, s.scaleY);
+      const img = this.spare('ghost', s.texture.key, s.frame.name, s.x, s.y, this.world.getIndex(s)).setOrigin(s.originX, s.originY).setFlipX(s.flipX).setScale(s.scaleX, s.scaleY);
       img.setTint(PLAYER_COLORS[i].hex).setTintMode(Phaser.TintModes.FILL).setAlpha(0.55);
-      this.world.addAt(img, this.world.getIndex(s));
       this.ghosts.push({ img, life: 0.25 });
     }
   }

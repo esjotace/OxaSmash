@@ -62,8 +62,8 @@ export function buildScenery(scene, st, hooks = {}) {
     const src = scene.textures.get(key).getSourceImage();
     const w = src.width * scale;
     const h = src.height * scale;
-    const c = scene.add.container(0, 0);
-    for (let x = left - 2 * w; x < right + 2 * w; x += w) c.add(img(scene, key, x, bottomY - h).setScale(scale));
+    // (One repeating picture across the whole width, not a copy per stretch.)
+    const c = scene.add.container(0, 0, [scene.add.tileSprite(left - 2 * w, bottomY - h, right - left + 4 * w, h, key).setOrigin(0, 0).setTileScale(scale)]);
     layers.push({ c, f });
     out.push(c);
   };
@@ -247,18 +247,34 @@ function drawBlock(scene, theme, k, b, depth) {
   const out = [];
   if (!SCENERY_LOOKS.has(look)) return out;
   // A 3x3 slice of square pieces (size px); ground: runs down out of sight with no bottom edge.
+  // (The top row and any bottom row are pieces; the body between is three repeating pictures, the
+  // left edge, the middle and the right edge, not a piece per square.)
   const slice = (size, ground) => {
     const cols = Math.max(1, Math.round(w / size));
     const rows = ground ? Math.ceil((depth - y) / size) : Math.max(1, Math.round(h / size));
-    for (let r = 0; r < rows; r++) {
-      const row = r === 0 ? 't' : r === rows - 1 && !ground ? 'b' : '';
+    // (The pines' dark earth, a touch paler under the snow.)
+    const earth = theme === 'pines' ? 0x9aa6b8 : 0xffffff;
+    const piece = (name, px, py) => has(scene, k(name)) && out.push(img(scene, k(name), px, py).setTint(py > y ? earth : 0xffffff));
+    const rowOf = (r, row) => {
       for (let c = 0; c < cols; c++) {
         const side = c === 0 ? 'l' : c === cols - 1 ? 'r' : '';
-        const name = row && side ? `g-${row}${side}` : row ? `g-${row}` : side ? `g-${side}` : 'g-m';
-        // (The pines' dark earth, a touch paler under the snow.)
-        if (has(scene, k(name))) out.push(img(scene, k(name), x + c * size, y + r * size).setTint(theme === 'pines' && r > 0 ? 0x9aa6b8 : 0xffffff));
+        piece(row && side ? `g-${row}${side}` : row ? `g-${row}` : side ? `g-${side}` : 'g-m', x + c * size, y + r * size);
+      }
+    };
+    rowOf(0, 't');
+    const bodyRows = rows - 1 - (ground ? 0 : 1);
+    if (bodyRows > 0) {
+      const by = y + size;
+      const bh = bodyRows * size;
+      const strip = (name, sx, sw) => has(scene, k(name)) && sw > 0 && out.push(tiles(scene, k(name), sx, by, sw, bh).setTint(earth));
+      if (cols === 1) strip('g-m', x, size);
+      else {
+        strip('g-l', x, size);
+        strip('g-m', x + size, (cols - 2) * size);
+        strip('g-r', x + (cols - 1) * size, size);
       }
     }
+    if (!ground && rows > 1) rowOf(rows - 1, 'b');
   };
   // A row of pieces: left end, middle, right end (one piece wide: `one`).
   const row = (size, l, m, r, one = null) => {
@@ -317,24 +333,15 @@ function drawBlock(scene, theme, k, b, depth) {
   // floors above (thin), rooms stuffed full of boxes.
   if (look === 'resfloor') {
     out.push(tiles(scene, k('brick'), x, y + 8, w, depth - y));
-    for (let wy = y + 40; wy < depth; wy += 48) for (let wx = x + 24; wx < x + w - 40; wx += 56) out.push(img(scene, k('window'), wx, wy).setTint(0x8890a8));
+    // (The rows of windows: one repeating picture of a window in its 56x48 stretch of wall.)
+    const cell = windowCell(scene, k);
+    if (cell) out.push(tiles(scene, cell, x + 24, y + 40, w - 48, depth - y - 40).setTint(0x8890a8));
     out.push(...woodRun(scene, 'board', x, y, w));
   }
   if (look === 'resplank') out.push(...woodRun(scene, 'board', x, y, w));
   if (look === 'stuffed') {
-    // Boxes and crates stacked to the ceiling.
-    const g = scene.add.graphics();
-    g.fillStyle(0x3a2a22, 1).fillRect(x, y, w, h);
-    out.push(g);
-    const keys = ['cover-box', 'cover-crate', 'cover-bigbox'].filter((key) => has(scene, key));
-    let n = Math.round(x + y);
-    // (Packed tight, each row shifted half a box: no gaps.)
-    for (let by = y + h, row = 0; by > y + 6; by -= 13, row++) {
-      for (let bx = x + (row % 2 ? -6 : 2); bx < x + w - 8; bx += 15) {
-        n = (n * 31 + 7) % 97;
-        if (keys.length) out.push(img(scene, keys[n % keys.length], bx, by, 0, 1).setFlipX(n % 2 === 0).setTint(0xc0b8b0));
-      }
-    }
+    // Boxes and crates stacked to the ceiling, baked into one picture.
+    out.push(img(scene, stuffedRoom(scene, w, h, Math.round(x + y)), x, y));
   }
   // A water tower's top: a bright deck to stand on (the tower under it is backdrop).
   if (look === 'tank') out.push(tiles(scene, k('deck'), x, y, w, 16));
@@ -387,6 +394,51 @@ function castleWalls(scene, st, k) {
   // The sea far below the islands.
   if (st.sea) out.push(scene.add.rectangle(st.sea.x, st.sea.y, st.sea.w, 400, 0x3d8fd6).setOrigin(0, 0), scene.add.rectangle(st.sea.x, st.sea.y, st.sea.w, 3, 0xbfe8ff).setOrigin(0, 0));
   return out;
+}
+
+// One window in its stretch of wall (56x48, see-through around it), made once: Residencia's rows of
+// windows repeat it.
+function windowCell(scene, k) {
+  const key = 'retro-windowcell';
+  if (scene.textures.exists(key)) return key;
+  if (!scene.textures.exists(k('window'))) return null;
+  const tex = scene.textures.createCanvas(key, 56, 48);
+  tex.getContext().drawImage(scene.textures.get(k('window')).getSourceImage(), 0, 0);
+  tex.refresh();
+  return key;
+}
+
+// A room stuffed with boxes and crates (w x h px): packed tight, each row shifted half a box,
+// slightly shaded; made once per room as a single picture. seed: varies the boxes.
+function stuffedRoom(scene, w, h, seed) {
+  const key = `retro-stuffed-${w}x${h}-${seed}`;
+  if (scene.textures.exists(key)) return key;
+  const tex = scene.textures.createCanvas(key, w, h);
+  const ctx = tex.getContext();
+  ctx.fillStyle = '#3a2a22';
+  ctx.fillRect(0, 0, w, h);
+  const boxes = ['cover-box', 'cover-crate', 'cover-bigbox'].filter((b) => scene.textures.exists(b)).map((b) => scene.textures.get(b).getSourceImage());
+  let n = seed;
+  for (let by = h, row = 0; by > 6; by -= 13, row++) {
+    for (let bx = row % 2 ? -6 : 2; bx < w - 8; bx += 15) {
+      n = (n * 31 + 7) % 97;
+      const im = boxes[n % boxes.length];
+      if (!im) continue;
+      ctx.save();
+      if (n % 2 === 0) {
+        ctx.translate(bx + im.width, by - im.height);
+        ctx.scale(-1, 1);
+        ctx.drawImage(im, 0, 0);
+      } else ctx.drawImage(im, bx, by - im.height);
+      ctx.restore();
+    }
+  }
+  // (A little shade over it all.)
+  ctx.globalCompositeOperation = 'source-atop';
+  ctx.fillStyle = 'rgba(40, 30, 28, 0.25)';
+  ctx.fillRect(0, 0, w, h);
+  tex.refresh();
+  return key;
 }
 
 // Residencia's rooms, behind everyone: each building's back wall (its own colour), a lamp and a

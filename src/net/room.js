@@ -74,7 +74,7 @@ export class OnlineRoom {
     this.code = code;
     this.leaving = false;
     this.reason = 'The connection to the room was lost.';
-    this.handlers = { lobby() {}, start() {}, match() {}, closed() {}, duels() {}, standing() {} };
+    this.handlers = { lobby() {}, start() {}, match() {}, closed() {}, duels() {}, standing() {}, rematch() {}, notice() {} };
     // A match's first messages, kept until the match is listening (it takes a moment to load).
     this.early = null;
     // (Both ways through the practice lag, if it's on.)
@@ -109,6 +109,8 @@ export class OnlineRoom {
       else this.handlers.match(msg);
     } else if (msg.t === 'standing') this.handlers.standing(msg);
     else if (msg.t === 'duels') this.handlers.duels(msg);
+    else if (msg.t === 'rematch') this.handlers.rematch(msg);
+    else if (msg.t === 'notice' && typeof msg.text === 'string') this.handlers.notice(msg.text.slice(0, 120));
     else if (msg.t === 'ping') this.send({ t: 'pong', s: msg.s });
     else if (msg.t === 'refused' && typeof msg.reason === 'string') this.reason = msg.reason.slice(0, 120);
   }
@@ -133,7 +135,8 @@ export class OnlineRoom {
     this.send({ t: 'char', char });
   }
 
-  // The owner's commands: rules, addBot, remove, start, again, lobby, duelNow.
+  // The owner's commands: rules, addBot, remove, start, again, lobby, duelNow, rematchNow, private,
+  // giveOwner. (Anyone: suggest, vote, lobbyReady, rematchAnswer.)
   command(t, extra = {}) {
     this.send({ t, ...extra });
   }

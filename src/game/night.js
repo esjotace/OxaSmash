@@ -113,7 +113,8 @@ export function buildNight(scene, st) {
     if (!scene.textures.exists(key)) return;
     const img = scene.textures.get(key).getSourceImage();
     const layer = scene.add.container(0, 0);
-    for (let x = left - 2 * img.width; x < right + 2 * img.width; x += img.width) layer.add(scene.add.image(x, top, key).setOrigin(0, 0).setTint(tint));
+    // (One repeating picture across the whole width.)
+    layer.add(scene.add.tileSprite(left - 2 * img.width, top, right - left + 4 * img.width, img.height, key).setOrigin(0, 0).setTint(tint));
     city.push({ layer, f });
     out.push(layer);
   });

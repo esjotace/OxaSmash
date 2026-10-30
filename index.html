@@ -185,13 +185,26 @@
           <label class="field small">Level <select id="lobbyBotLevel"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
           <label class="field small">Stage <select id="lobbyStage"></select></label>
           <button id="lobbyRulesBtn" class="btn small ghost">Rules</button>
+          <label class="check" title="Off the public room list: friends join with the code."><input id="lobbyPrivate" type="checkbox" /> Private</label>
         </div>
         <p id="lobbyRules" class="muted"></p>
+        <!-- Guests: suggest a stage and rules for the next match (the owner decides). -->
+        <div id="suggestTools" class="row" hidden>
+          <label class="field small">Suggest a stage <select id="suggestStage"><option value="">—</option></select></label>
+          <label class="field small">and rules <select id="suggestPreset"><option value="">—</option></select></label>
+          <button id="suggestSend" class="btn small">Suggest</button>
+        </div>
         <div class="row">
           <button id="startMatch" class="btn primary">Start</button>
+          <button id="readyBtn" class="btn primary" hidden>Ready</button>
           <button id="leaveRoom" class="btn ghost">Leave room</button>
         </div>
         <p id="lobbyStatus" class="status" role="status"></p>
+        <!-- Everyone's suggestions, tagged with who made them (the owner can use one). -->
+        <details id="suggestBox" class="custom-rules" hidden>
+          <summary id="suggestTitle">Suggestions</summary>
+          <ul id="suggestList" class="players"></ul>
+        </details>
       </div>
     </main>
 
@@ -227,7 +240,9 @@
         <div class="rules">
           <label class="field small">Lives <select id="roomLives"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
           <label class="field small">Rounds <select id="roomRounds"><option value="1" selected>1</option><option value="3">Best of 3</option><option value="5">Best of 5</option></select></label>
+          <label class="field small" title="With more people than seats: after each match (after a series, once it's decided), one player sits out and joins the back of the queue.">Player rotation <select id="roomRotation"><option value="off" selected>Off</option><option value="crown" title="After each match, the player with the best score sits and joins the back of the queue.">Pass the Crown</option><option value="skill" title="The player who loses by the widest margin rotates out, and the next player takes their place.">Skill Issue</option></select></label>
         </div>
+        <p id="roomRotationHint" class="hint muted"></p>
         <details id="roomCustom" class="custom-rules">
           <summary>Custom rules</summary>
           <div class="rules">
@@ -320,6 +335,15 @@
           <ul id="duelInbox" class="players"></ul>
           <ul id="duelList" class="players"></ul>
         </section>
+        <!-- Online: a rematch or new series on offer (accept, or sit it out). -->
+        <section id="rematchBox" class="duel-board" hidden>
+          <p id="rematchLine" class="duel-phase"></p>
+          <div class="row">
+            <button id="rematchYes" class="btn primary">Accept</button>
+            <button id="rematchNo" class="btn ghost">Sit this one out</button>
+            <button id="rematchNow" class="btn primary" hidden>Start now</button>
+          </div>
+        </section>
         <div class="row">
           <button id="again" class="btn primary">Play again</button>
           <button id="toMenu" class="btn ghost">Menu</button>
@@ -370,6 +394,12 @@
             <button id="leaveMatch" class="btn ghost">Leave match</button>
           </div>
           <p id="pausedNote" class="muted"></p>
+          <!-- (?perf in the address: the performance log; see src/game/perf.js.) -->
+          <div id="perfBox" class="row" hidden>
+            <button id="perfCopy" class="btn">Copy performance log</button>
+            <button id="perfRestart" class="btn ghost">Measure again from now</button>
+            <span id="perfNote" class="muted"></span>
+          </div>
           <label class="slider">Master <input id="volMaster" type="range" min="0" max="1" step="0.05" /></label>
           <label class="slider">Effects <input id="volEffects" type="range" min="0" max="1" step="0.05" /></label>
           <label class="slider">Announcer <input id="volAnnouncer" type="range" min="0" max="1" step="0.05" /></label>

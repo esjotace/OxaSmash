@@ -1,4 +1,5 @@
 // Menus, lobby and results (plain DOM), and starting matches in the right mode.
+import { PERF, perfLog, perfRestart } from './game/perf.js';
 import { OnlineRoom, RoomList, cleanCode, cleanName, describeNetError, CODE_LENGTH, PRACTICE_LAG, PRACTICE_DELAY } from './net/room.js';
 import { DUEL_MODES } from './net/duels.js';
 import { rulesPicker, PRESETS } from './rulesui.js';
@@ -166,6 +167,29 @@ function playTraining() {
   // (A random stage is rolled again each time.)
   playLocal(roster, RULES.stocks, Object.hasOwn(STAGES, d.stage) || d.stage === MIXED ? d.stage : 'training', true, { dummies: d });
 }
+
+// ---- Performance log (?perf) ------------------------------------------------------
+// In the in-game menu: copy the log (to paste it somewhere), or start measuring again from now.
+$('perfBox').hidden = !PERF;
+$('perfCopy').onclick = async () => {
+  const text = perfLog();
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // (No clipboard access: copy the old way, through a hidden text box.)
+    const box = document.createElement('textarea');
+    box.value = text;
+    document.body.append(box);
+    box.select();
+    document.execCommand('copy');
+    box.remove();
+  }
+  $('perfNote').textContent = `Copied (${text.split('\n').length} lines). Paste it to Claude.`;
+};
+$('perfRestart').onclick = () => {
+  perfRestart();
+  $('perfNote').textContent = 'Measuring again from now.';
+};
 
 // ---- Main menu ----------------------------------------------------------------
 // The modes are slanted bars, one open at a time; a closed bar's buttons and fields can't be
@@ -401,11 +425,21 @@ $('roomRulesGo').onclick = () => {
   } else enterRoom({ create: true, rules: roomRules() }, $('roomRulesGo'), 'Creating…');
 };
 
+// Player rotation: what the chosen one does, under it.
+const ROTATION_HINT = {
+  off: '',
+  crown: 'Pass the Crown: after each match, the player with the best score sits and joins the back of the queue.',
+  skill: 'Skill Issue: the player who loses by the widest margin rotates out, and the next player takes their place.',
+};
+const showRotationHint = () => ($('roomRotationHint').textContent = ROTATION_HINT[$('roomRotation').value] ?? '');
+$('roomRotation').addEventListener('change', showRotationHint);
+showRotationHint();
+
 // The rules as set on the rules screen.
 function roomRules() {
   const stage = Object.hasOwn(STAGES, $('roomStage').value) || $('roomStage').value === MIXED ? $('roomStage').value : DEFAULT_STAGE;
   const { preset, rules } = roomPicker.read();
-  return { stocks: Number($('roomLives').value) || RULES.stocks, rounds: Number($('roomRounds').value) || 1, stage, preset, rules, stormPace: $('roomStorm').value, crownRule: $('roomCrown').value };
+  return { stocks: Number($('roomLives').value) || RULES.stocks, rounds: Number($('roomRounds').value) || 1, stage, preset, rules, stormPace: $('roomStorm').value, crownRule: $('roomCrown').value, rotation: $('roomRotation').value };
 }
 
 // Rules in a line, for the lobby (the room's, as the server has them; else the rules screen's).
@@ -420,6 +454,7 @@ function rulesSummary(r = roomRules()) {
   const what = PRESETS.includes(r.preset) ? [DUEL_MODES[r.preset].name] : off.length ? off : ['everything on'];
   const parts = [...what, `${r.stocks} ${r.stocks === 1 ? 'life' : 'lives'}`, r.rounds > 1 ? `best of ${r.rounds}` : '', `storm ${label('roomStorm', r.stormPace).toLowerCase()}`].filter(Boolean);
   if (r.crownRule && r.crownRule !== 'show') parts.push(`crown: ${r.crownRule}`);
+  if (r.rotation && r.rotation !== 'off') parts.push(r.rotation === 'crown' ? 'rotation: Pass the Crown' : 'rotation: Skill Issue');
   return parts.join(' · ');
 }
 
@@ -439,12 +474,15 @@ function enterRoom(how, button, label) {
           state.lobby = msg;
           state.owner = !!msg.owner;
           duel.view = null;
+          rematch.view = null;
           stopMatch();
           renderLobby();
           show('lobby');
         })
         .on('start', startOnline)
         .on('duels', onDuels)
+        .on('rematch', onRematch)
+        .on('notice', (text) => toast(text))
         .on('standing', (msg) => {
           state.standing = { left: Array.isArray(msg.left) ? msg.left.filter(Number.isInteger) : [], rematch: msg.rematch !== false, duel: msg.duel !== false };
           resultsButtons();
@@ -467,6 +505,51 @@ $('lobbyStage').onchange = () => {
   $('roomStage').dispatchEvent(new Event('change'));
   state.room?.command('rules', { rules: roomRules() });
 };
+
+// ---- Suggestions (guests, in the lobby) ----
+// Guests can't change the rules (only the owner can), but they can suggest a stage and a preset;
+// everyone sees the suggestions, tagged with who made them, and the owner can use one.
+for (const [value, text] of STAGE_CHOICES) $('suggestStage').append(new Option(text, value));
+for (const key of PRESETS) $('suggestPreset').append(new Option(DUEL_MODES[key].name, key));
+$('suggestSend').onclick = () => {
+  state.room?.command('suggest', { stage: $('suggestStage').value || null, preset: $('suggestPreset').value || null });
+  toast('Suggested. The owner decides.');
+};
+
+$('readyBtn').onclick = () => {
+  const me = state.lobby?.players?.[state.lobby?.you];
+  state.room?.command('lobbyReady', { on: !me?.ready });
+};
+$('lobbyPrivate').onchange = () => state.room?.command('private', { on: $('lobbyPrivate').checked });
+
+function renderSuggestions(all, seated, owner, you) {
+  $('suggestTools').hidden = owner;
+  // (A suggestion's tag is its player's colour: their seat, as in the list above.)
+  const colorOf = (i) => Math.max(0, seated.findIndex((s) => s.i === i)) % PLAYER_COLORS.length;
+  const list = all.map((p, i) => ({ p, i })).filter(({ p }) => p.suggest && (p.suggest.stage || p.suggest.preset));
+  $('suggestBox').hidden = !list.length;
+  $('suggestTitle').textContent = `Suggestions (${list.length})`;
+  $('suggestList').replaceChildren(
+    ...list.map(({ p, i }) => {
+      const s = p.suggest;
+      const what = [s.preset && DUEL_MODES[s.preset]?.name, s.stage && stageName(s.stage)].filter(Boolean).join(' on ');
+      const votes = p.votes ? ` · ${p.votes} vote${p.votes === 1 ? '' : 's'}` : '';
+      const li = playerRow(cleanName(p.name), colorOf(i), `${i === you ? 'You suggest' : 'suggests'} ${what}${votes}`);
+      // (+1 someone else's; again to take it back.)
+      if (i !== you && !owner) li.append(rowButton(p.voted ? 'Voted ✓' : '+1', () => state.room?.command('vote', { i }), !p.voted));
+      if (owner) {
+        li.append(
+          rowButton('Use', () => {
+            if (s.stage) $('roomStage').value = s.stage;
+            if (s.preset) roomPicker.set(s.preset);
+            state.room?.command('rules', { rules: roomRules() });
+          }),
+        );
+      }
+      return li;
+    }),
+  );
+}
 
 function join() {
   const code = cleanCode($('joinCode').value);
@@ -554,7 +637,9 @@ function renderLobby() {
     if (i === you) tags.push('You');
     if (p.kind === 'host') tags.push('Owner');
     if (p.kind === 'bot') tags.push(`Bot · ${String(p.level ?? 'normal')}`);
+    if (p.ready) tags.push('Ready ✓');
     const li = playerRow(cleanName(p.name), color, tags.join(' · '));
+    if (owner && p.kind === 'remote') li.append(rowButton('Make owner', () => room.command('giveOwner', { i })));
     if (owner && p.kind !== 'host') li.append(rowButton('Remove', () => room.command('remove', { i })));
     return li;
   };
@@ -573,6 +658,16 @@ function renderLobby() {
   $('lobbyRules').textContent = r ? `${owner ? '' : `Stage: ${stageName(r.stage)} · `}Rules: ${rulesSummary(r)}` : '';
   $('startMatch').hidden = !owner;
   $('startMatch').disabled = players.length < 2;
+  // Ready: guests say so; the owner's Start pulses once every seated guest is (they can start anyway).
+  const guests = seated.filter(({ p }) => p.kind === 'remote');
+  const allReady = guests.length > 0 && guests.every(({ p }) => p.ready);
+  $('startMatch').classList.toggle('all-ready', owner && allReady);
+  const me = all[you];
+  $('readyBtn').hidden = owner || !me || me.watching;
+  $('readyBtn').textContent = me?.ready ? 'Not ready' : 'Ready';
+  $('readyBtn').classList.toggle('ghost', !!me?.ready);
+  $('lobbyPrivate').checked = !!state.lobby?.private;
+  renderSuggestions(all, seated, owner, you);
   $('lobbyStatus').textContent = !players.length
     ? 'Connecting…'
     : !owner
@@ -602,6 +697,7 @@ function backToMenu() {
   state.role = null;
   state.owner = false;
   state.lobby = null;
+  rematch.view = null;
   show('menu');
 }
 
@@ -642,7 +738,10 @@ function showResults(view, roster) {
 function resultsButtons() {
   const online = state.role === 'online';
   const series = state.series;
-  $('again').hidden = online && !state.owner;
+  // (Online: only the owner, and not while duels are being set up or a rematch is on offer.)
+  const v = duel.view;
+  const duelsBusy = !!v && (v.invites.length > 0 || (v.duels.length > 0 && v.phase !== 'done'));
+  $('again').hidden = online && (!state.owner || duelsBusy || !!rematch.view);
   $('again').textContent = series ? (series.over ? 'New series' : 'Next round') : online ? 'Rematch' : 'Play again';
   // Online: who's left the room, grayed out; no one left to play: no rematch.
   const standing = online ? state.standing : null;
@@ -656,6 +755,48 @@ function resultsButtons() {
   $('toMenu').textContent = online ? (state.owner ? 'Back to lobby' : 'Leave room') : state.botMatch ? 'Back to setup' : 'Menu';
   $('resultsStatus').textContent = standing && !standing.rematch ? 'Everyone else has left: not enough players for a rematch.' : online && !state.owner ? 'Waiting for the room owner…' : '';
 }
+
+// ---- Rematch invites (online) ----
+// The owner's Rematch / New series is an invite: everyone who played (not in a duel, not
+// spectating the duels) can accept or sit it out; it starts in 10 s, or as soon as everyone
+// accepts. (The server keeps it: see offerRematch in server/room.js.)
+const rematch = { view: null, owner: '', you: -1 };
+
+function onRematch(msg) {
+  const r = msg?.r;
+  const ints = (a) => (Array.isArray(a) ? a.filter(Number.isInteger) : []);
+  rematch.view = r && typeof r === 'object' ? { left: Number(r.left) || 0, invited: ints(r.invited), yes: ints(r.yes), no: ints(r.no), series: !!r.series } : null;
+  rematch.owner = cleanName(String(msg?.owner ?? ''));
+  rematch.you = Number.isInteger(msg?.you) ? msg.you : -1;
+  renderRematch();
+  resultsButtons();
+  renderDuelBoard();
+}
+
+function renderRematch() {
+  const r = rematch.view;
+  $('rematchBox').hidden = !r;
+  if (!r) return;
+  const what = r.series ? 'a new series' : 'a rematch';
+  const invited = r.invited.includes(rematch.you);
+  const answer = r.yes.includes(rematch.you) ? 'yes' : r.no.includes(rematch.you) ? 'no' : null;
+  const count = `${r.yes.length}/${r.invited.length} in`;
+  let line;
+  if (r.duels && r.left === 0) line = `${what[0].toUpperCase()}${what.slice(1)} starts once the duels are done (${count}).`;
+  else if (state.owner) line = `You invited everyone to ${what}: it starts in ${r.left} s (${count}${r.allIn ? ', everyone' : ''}).`;
+  else if (invited && !answer) line = `${rematch.owner} invites you to ${what}. Accept? It starts in ${r.left} s (no answer: you'll watch this one).`;
+  else if (answer === 'yes') line = `You're in: ${what} starts in ${r.left} s (${count}).`;
+  else if (answer === 'no') line = `You're sitting this one out (you'll watch). ${what[0].toUpperCase()}${what.slice(1)} starts in ${r.left} s.`;
+  else line = `${rematch.owner} started ${what}: it starts in ${r.left} s. (You're watching this one.)`;
+  $('rematchLine').textContent = line;
+  $('rematchYes').hidden = !invited || answer === 'yes';
+  $('rematchNo').hidden = !invited || answer === 'no';
+  // (Everyone's in: the owner can start it without waiting the last seconds; not while duels are on.)
+  $('rematchNow').hidden = !(state.owner && r.allIn && !r.duels);
+}
+$('rematchNow').onclick = () => state.room?.command('rematchNow');
+$('rematchYes').onclick = () => state.room?.command('rematchAnswer', { yes: true });
+$('rematchNo').onclick = () => state.room?.command('rematchAnswer', { yes: false });
 
 $('again').onclick = () => {
   if (state.role === 'online') return state.room?.command('again');
@@ -760,7 +901,8 @@ function renderDuelBoard() {
   const gathering = v.phase === 'gather' || v.phase === 'countdown';
   const watching = v.watching.includes(me);
   const undecided = free(me) && !watching;
-  $('duelBtn').disabled = !gathering || !free(me) || state.standing?.duel === false;
+  // (The DUEL button only shows when it can be used.)
+  $('duelBtn').hidden = !gathering || !free(me) || state.standing?.duel === false || !!rematch.view;
   $('duelWatch').textContent = watching ? 'Stop spectating' : 'Spectate duels';
   $('duelAuto').checked = !v.autoOff.includes(me);
   $('duelNow').hidden = !(state.owner && v.phase === 'gather' && v.duels.length > 0);

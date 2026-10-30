@@ -3,6 +3,7 @@
 //   client – online: the game server's match, played here too, from the same start and inputs
 //            (rollback: see net/rollback.js)
 import { SCENERY_ART } from './scenery.js';
+import { PERF, perfStart, perfFrame, perfStep, perfMachine } from './perf.js';
 import Phaser from 'phaser';
 import { COVER_ART } from './cover.js';
 import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE, CAT, ANIMALS } from '../sim/constants.js';
@@ -107,6 +108,17 @@ export class MatchScene extends Phaser.Scene {
     const locals = roster.map((p, i) => (isLocal(p) ? i : -1)).filter((i) => i >= 0);
     makeCharacterAnims(this);
     this.draw = new Renderer(this, roster, you, locals, locals.length === 1 && roster[locals[0]].kind === 'kbm', stage);
+    // (?perf: measuring starts with the match; see perf.js.)
+    if (PERF) {
+      perfStart({
+        version: import.meta.env.VITE_APP_VERSION || 'dev',
+        date: new Date().toISOString(),
+        mode: this.cfg.mode + (this.cfg.training ? ' (training)' : ''),
+        stage,
+        players: `${roster.length} (${roster.map((p) => p.kind).join(', ')})`,
+        ...perfMachine(this.game, this.scale.width / 640),
+      });
+    }
     // (Watching, or once out: the spectator camera's own keys.)
     this.spectator = new Spectator(this.game.canvas);
     this.draw.spectator = this.spectator;
@@ -235,9 +247,23 @@ export class MatchScene extends Phaser.Scene {
       for (const c of this.controls) if (c) c.menuPressed = false;
       window.dispatchEvent(new CustomEvent('oxasmash-menu', { detail: { player: opener.scheme, pad: `pad${opener.pad}` } }));
     }
+    const t0 = PERF ? performance.now() : 0;
     if (this.cfg.mode === 'client') this.updateClient(time, delta);
     else if (!this.paused) this.updateLocal(delta);
+    const t1 = PERF ? performance.now() : 0;
     this.draw.render(this.view, delta);
+    if (PERF && !this.menuOpen) {
+      const d = this.draw;
+      const w = this.net?.world ?? this.world;
+      perfFrame(delta, t1 - t0, performance.now() - t1, {
+        objs: this.children.list.length + (d.world?.list?.length ?? 0) + (d.hud?.list?.length ?? 0),
+        parts: d.particles?.length ?? 0,
+        puffs: d.puffs?.length ?? 0,
+        ghosts: d.ghosts?.length ?? 0,
+        clouds: w?.clouds?.length ?? 0,
+        bullets: w?.bullets?.length ?? 0,
+      });
+    }
     // (Online, the end comes from the server: see updateClient.)
     if (this.cfg.mode === 'local' && !this.ended && this.view?.phase === 'over' && this.view.timer <= 0) {
       this.ended = true;
@@ -252,6 +278,7 @@ export class MatchScene extends Phaser.Scene {
     while (this.acc >= DT) {
       this.acc -= DT;
       step(this.world, roster.map((p, i) => this.inputFor(i)));
+      perfStep();
       if (this.world.events.length) this.draw.effects(this.world.events);
     }
     this.view = toView(this.world);

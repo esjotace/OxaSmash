@@ -34,9 +34,29 @@ const MAX_STEPS = 15; // at most this many ticks caught up at once (after a stal
 
 // The rule presets (the duel modes, but Crowd's Choice); anything else is custom.
 const PRESETS = Object.keys(DUEL_MODES).filter((k) => k !== 'crowd');
+// A rematch or a new series, after a match: the owner invites everyone, who has REMATCH_MS to
+// accept or sit it out; once everyone's in, it starts within ALL_IN_MS (or now, if the owner says).
+// It never starts while duels are being set up or fought: it waits for them.
+export const REMATCH_MS = 30000;
+export const ALL_IN_MS = 10000;
+// In the lobby, someone seated who does nothing for this long gives their seat to whoever's been
+// waiting (only if someone is).
+export const IDLE_MS = 3 * 60 * 1000;
+// Player rotation (more people than seats): after each match (after a series, once it's decided),
+// one player sits out and joins the back of the queue. 'crown': Pass the Crown, the best score;
+// 'skill': Skill Issue, whoever lost by the widest margin.
+const ROTATIONS = ['off', 'crown', 'skill'];
+
+// A guest's suggestion for the next match (the owner can adopt it): a stage and a rule preset,
+// either one optional.
+function cleanSuggestion(s) {
+  const stage = s?.stage === MIXED || isStageId(s?.stage) ? s.stage : null;
+  const preset = PRESETS.includes(s?.preset) ? s.preset : null;
+  return stage || preset ? { stage, preset } : null;
+}
 
 // The rules a room starts with (the owner changes them).
-export const DEFAULT_RULES = { stocks: RULES.stocks, rounds: 1, stage: MIXED, preset: 'normal', rules: { melee: true, ranged: true, thrown: true, items: true }, stormPace: 'normal', crownRule: 'show' };
+export const DEFAULT_RULES = { stocks: RULES.stocks, rounds: 1, stage: MIXED, preset: 'normal', rules: { melee: true, ranged: true, thrown: true, items: true }, stormPace: 'normal', crownRule: 'show', rotation: 'off' };
 
 // Rules from a player: only known values get through.
 export function cleanRules(r = {}) {
@@ -58,6 +78,7 @@ export function cleanRules(r = {}) {
     preset: PRESETS.includes(r.preset) ? r.preset : 'custom',
     stormPace: Object.hasOwn(STORM_PACE, r.stormPace) ? r.stormPace : 'normal',
     crownRule: ['show', 'bounty', 'weight'].includes(r.crownRule) ? r.crownRule : 'show',
+    rotation: ROTATIONS.includes(r.rotation) ? r.rotation : 'off',
   };
 }
 
@@ -77,6 +98,9 @@ export class Room {
     this.series = null; // best of 3 or 5: { rounds, round, over } (each player's wins: their `wins`)
     this.crownName = null; // last match's winner (wears the crown)
     this.duels = null; // the honor duel board, after a match
+    this.rematch = null; // a rematch or new series on offer: { ends, yes, no } (sets of players)
+    this.private = false; // kept off the public room list (join by code only)
+    this.lastScores = null; // the last match's players, how they did: [{ p, stocks, kos }]
     this.duelSent = '';
   }
 
@@ -87,7 +111,7 @@ export class Room {
   join(name, char, send, now) {
     const seated = this.phase === 'lobby' && this.seats() < RULES.maxOnline;
     if (!seated && this.watching() >= RULES.maxWatching) return `That room is full (${RULES.maxOnline} playing, ${RULES.maxWatching} watching).`;
-    const p = { kind: 'person', name: cleanName(name), char: CHARACTERS.includes(char) ? char : null, send, ms: null, owner: !this.people().length, seated, wins: 0 };
+    const p = { kind: 'person', name: cleanName(name), char: CHARACTERS.includes(char) ? char : null, send, ms: null, owner: !this.people().length, seated, wins: 0, joined: now, active: now };
     this.players.push(p);
     const i = this.players.length - 1;
     if (this.phase === 'lobby') this.sendLobby();
@@ -110,7 +134,7 @@ export class Room {
 
   // In the lobby: whoever's been watching longest takes any open seat.
   seatWatchers() {
-    for (const p of this.players) if (!p.seated && !p.left && p.kind === 'person' && this.seats() < RULES.maxOnline) p.seated = true;
+    for (const p of this.players) if (!p.seated && !p.left && !p.sitOut && p.kind === 'person' && this.seats() < RULES.maxOnline) p.seated = true;
   }
 
   leave(i, now) {
@@ -127,10 +151,11 @@ export class Room {
       if (f >= 0) this.match.outs.push(f);
       this.match?.waiting.delete(i);
       this.duels?.leave(i);
+      if (this.rematch) this.allIn(now);
     }
     // Nobody left: the room closes. Otherwise the next person takes over (a seated one first).
     if (!this.people().length) return this.onEmpty(this);
-    if (wasOwner) (this.people().find((q) => q.seated) ?? this.people()[0]).owner = true;
+    if (wasOwner) this.passOwner([...this.people()].sort((a, b) => (a.joined ?? 0) - (b.joined ?? 0))[0]);
     if (this.phase === 'lobby') {
       this.seatWatchers();
       this.sendLobby();
@@ -141,6 +166,18 @@ export class Room {
   }
 
   people = () => this.players.filter((p) => p.kind === 'person' && !p.left);
+
+  // A new owner (the previous one left, or handed it over): everyone's told.
+  passOwner(q) {
+    if (!q) return;
+    for (const p of this.players) p.owner = p === q;
+    this.notice(`${q.name} is now the room's owner.`);
+  }
+
+  // A line for everyone (shown for a moment).
+  notice(text) {
+    for (const p of this.players) p.send?.({ t: 'notice', text });
+  }
 
   // For the room list: whose room, how full, what's on, and its people's average ping (ms; null
   // until measured).
@@ -154,6 +191,7 @@ export class Room {
       watching: this.watching(),
       phase: this.phase,
       ping: pings.length ? Math.round(pings.reduce((a, b) => a + b, 0) / pings.length) : null,
+      private: this.private,
     };
   }
   isOwner = (i) => !!this.players[i]?.owner;
@@ -163,6 +201,7 @@ export class Room {
   receive(i, msg, now) {
     const p = this.players[i];
     if (!p || p.left || !msg || typeof msg !== 'object') return;
+    if (msg.t !== 'pong') p.active = now;
     switch (msg.t) {
       case 'in': {
         // An input, for tick k: kept until then (too late for it: the last one stands in).
@@ -195,8 +234,46 @@ export class Room {
         break;
       }
       case 'duel':
-        if (this.duels?.act(i, { a: clip(msg.a, 16), to: Number(msg.to), from: Number(msg.from), mode: clip(msg.mode, 16), on: !!msg.on }, now)) this.pushDuels(now);
+        // (Duels go on as usual while a rematch is on offer: see invited.)
+        if (this.duels?.act(i, { a: clip(msg.a, 16), to: Number(msg.to), from: Number(msg.from), mode: clip(msg.mode, 16), on: !!msg.on }, now)) {
+          this.pushDuels(now);
+          this.pushRematch(now);
+        }
         break;
+      case 'suggest':
+        // A guest's suggestion for the next match (the owner changes the rules themselves). A new
+        // suggestion starts with no votes.
+        if (this.phase !== 'lobby' || p.owner) break;
+        p.suggest = cleanSuggestion(msg);
+        p.voters = new Set();
+        this.sendLobby();
+        break;
+      case 'vote': {
+        // +1 (or take it back) on someone else's suggestion.
+        const q = this.players[msg.i];
+        if (this.phase !== 'lobby' || !q?.suggest || q === p) break;
+        q.voters ??= new Set();
+        if (q.voters.has(p)) q.voters.delete(p);
+        else q.voters.add(p);
+        this.sendLobby();
+        break;
+      }
+      case 'lobbyReady':
+        // Ready for the next match (the owner sees who is; they can start anyway).
+        if (this.phase !== 'lobby' || p.owner) break;
+        p.ready = !!msg.on;
+        this.sendLobby();
+        break;
+      case 'rematchAnswer': {
+        const r = this.rematch;
+        if (!r || !this.invited(i, now)) break;
+        r.yes.delete(p);
+        r.no.delete(p);
+        (msg.yes ? r.yes : r.no).add(p);
+        this.allIn(now);
+        this.pushRematch(now);
+        break;
+      }
       default:
         if (p.owner) this.ownerCommand(msg, now);
     }
@@ -231,21 +308,25 @@ export class Room {
         if (this.phase === 'lobby') this.startMatch(now);
         return;
       case 'again':
-        // Rematch (or the series' next round); not enough people left for one: the lobby.
-        if (this.phase !== 'results') return;
+        // The series' next round: right away. A rematch or a new series: an invite (see
+        // offerRematch). Not enough people left for one: the lobby. Not while duels are being set
+        // up (someone challenged, or a duel's on).
+        if (this.phase !== 'results' || this.rematch) return;
         if (!this.canRematch()) return this.ownerCommand({ t: 'lobby' }, now);
-        if (this.series) {
-          if (this.series.over) {
-            Object.assign(this.series, { round: 1, over: false });
-            for (const p of this.players) p.wins = 0;
-          } else this.series.round++;
+        if (this.duelsBusy()) return;
+        if (this.series && !this.series.over) {
+          this.series.round++;
+          this.closeDuels();
+          this.tidy();
+          return this.startMatch(now);
         }
-        this.closeDuels();
-        this.tidy();
-        return this.startMatch(now);
+        return this.offerRematch(now);
       case 'lobby':
         if (this.phase === 'lobby') return;
         this.series = null;
+        this.rematch = null;
+        this.lastScores = null;
+        for (const p of this.players) p.sitOut = false;
         this.closeDuels();
         this.match = null;
         this.phase = 'lobby';
@@ -254,6 +335,19 @@ export class Room {
       case 'duelNow':
         if (this.duels?.startNow(now)) this.pushDuels(now);
         return;
+      case 'rematchNow':
+        // Everyone's in: start without waiting out the last seconds (not while duels are on).
+        if (this.rematch && this.everyoneIn(now) && !this.duelsBusy()) this.startRematch(now);
+        return;
+      case 'private':
+        this.private = !!msg.on;
+        return this.sendLobby();
+      case 'giveOwner': {
+        const q = this.players[msg.i];
+        if (!q || q.kind !== 'person' || q.left || q.owner) return;
+        this.passOwner(q);
+        return this.phase === 'lobby' ? this.sendLobby() : (this.pushDuels(now), this.sendStanding(), this.pushRematch(now));
+      }
     }
   }
 
@@ -266,14 +360,23 @@ export class Room {
     this.seatWatchers();
   }
 
-  lobbyPlayers() {
+  // viewer: who it's for (whether they voted for each suggestion).
+  lobbyPlayers(viewer) {
     // (kind: 'host' marks the owner, for the page; watching: no seat yet, waiting in this order.)
-    return this.players.map((p) => ({ name: p.name, kind: p.kind === 'bot' ? 'bot' : p.owner ? 'host' : 'remote', level: p.level, watching: !p.seated }));
+    return this.players.map((p) => ({
+      name: p.name,
+      kind: p.kind === 'bot' ? 'bot' : p.owner ? 'host' : 'remote',
+      level: p.level,
+      watching: !p.seated,
+      ready: !!p.ready,
+      suggest: p.suggest ?? null,
+      votes: p.voters?.size ?? 0,
+      voted: !!p.voters?.has(viewer),
+    }));
   }
 
   sendLobby() {
-    const players = this.lobbyPlayers();
-    this.players.forEach((p, you) => p.send?.({ t: 'lobby', code: this.code, players, you, owner: !!p.owner, rules: this.rules }));
+    this.players.forEach((p, you) => p.send?.({ t: 'lobby', code: this.code, players: this.lobbyPlayers(p), you, owner: !!p.owner, rules: this.rules, private: this.private }));
   }
 
   // ---- Matches -----------------------------------------------------------------------------
@@ -283,6 +386,7 @@ export class Room {
   startMatch(now) {
     const slots = this.players.map((p, i) => (p.seated ? i : -1)).filter((i) => i >= 0);
     if (slots.length < 2) return;
+    for (const p of this.players) Object.assign(p, { suggest: null, voters: null, ready: false });
     const r = this.rules;
     if (r.rounds > 1 && !this.series) {
       this.series = { rounds: r.rounds, round: 1, over: false };
@@ -340,6 +444,124 @@ export class Room {
       if (this.duels.tick(now) === 'fight') this.startDuel(now);
       this.pushDuels(now);
     }
+    if (this.rematch && this.phase === 'results') {
+      // (Anyone asked for the first time now, back from a duel: at least ALL_IN_MS to answer.)
+      const r = this.rematch;
+      for (const i of this.invitedList(now)) {
+        const p = this.players[i];
+        if (r.asked.has(p)) continue;
+        r.asked.add(p);
+        if (now > r.ends - ALL_IN_MS) r.ends = now + ALL_IN_MS;
+      }
+      if (now >= this.rematch.ends && !this.duelsBusy()) this.startRematch(now);
+      else this.pushRematch(now);
+    }
+    // The lobby: an idle seat goes to whoever's waiting.
+    if (this.phase === 'lobby') this.idleSeats(now);
+  }
+
+  // In the lobby, anyone seated (not the owner) idle for IDLE_MS gives their seat to whoever's
+  // been waiting longest, and joins the back of the queue.
+  idleSeats(now) {
+    const waiting = () => this.players.some((p) => !p.seated && !p.left && p.kind === 'person');
+    if (!waiting()) return;
+    const idle = this.players.find((p) => p.kind === 'person' && p.seated && !p.owner && !p.left && now - (p.active ?? now) > IDLE_MS);
+    if (!idle) return;
+    this.toBack(idle);
+    this.seatWatchers();
+    this.notice(`${idle.name} was idle: their seat went to the next in line.`);
+    this.sendLobby();
+  }
+
+  // Someone gets up: no seat, at the back of the queue (the list's order is the queue's).
+  toBack(p) {
+    p.seated = false;
+    p.ready = false;
+    this.players.splice(this.players.indexOf(p), 1);
+    this.players.push(p);
+  }
+
+  // Player rotation (see ROTATIONS): one of the last match's players gets up for whoever's
+  // waiting. Only between matches with someone waiting, and never mid-series.
+  rotate() {
+    const how = this.rules.rotation;
+    if (how === 'off' || !this.lastScores || (this.series && !this.series.over)) return;
+    if (!this.players.some((p) => !p.seated && !p.left && !p.sitOut && p.kind === 'person')) return;
+    const seated = this.lastScores.filter((s) => s.p.kind === 'person' && s.p.seated && !s.p.left);
+    if (!seated.length) return;
+    const by = (s) => s.stocks * 100 + s.kos;
+    const pick = seated.reduce((a, b) => (how === 'crown' ? (by(b) > by(a) ? b : a) : by(b) < by(a) ? b : a));
+    this.toBack(pick.p);
+    this.notice(how === 'crown' ? `${pick.p.name} passes the crown and sits out a turn.` : `Skill issue: ${pick.p.name} rotates out.`);
+  }
+
+  // ---- Rematch invites ---------------------------------------------------------------------
+
+  // Duels being set up: a challenge waiting, or a duel accepted and not fought yet.
+  duelsBusy() {
+    const d = this.duels;
+    return !!d && (d.invites.length > 0 || (d.duels.length > 0 && d.phase !== 'done'));
+  }
+
+  // Who the rematch invite is for right now: everyone who played (or sat the last one out) and is
+  // still here, spectating the duels or not, but the owner (it's theirs) and anyone in a duel
+  // (they're asked once the duels are over). Only those who accept play: anyone who says no, or
+  // doesn't answer by the start, watches (and is invited to the next one).
+  invited(i) {
+    const p = this.players[i];
+    if (!p || p.kind !== 'person' || p.left || !(p.seated || p.sitOut) || p.owner) return false;
+    return !(this.duelsBusy() && this.duels?.inDuel(i));
+  }
+  invitedList = (now) => this.players.map((_, i) => i).filter((i) => this.invited(i, now));
+  everyoneIn = (now) => this.invitedList(now).every((i) => this.rematch.yes.has(this.players[i]));
+
+  // Everyone's in: it starts within ALL_IN_MS.
+  allIn(now) {
+    if (this.everyoneIn(now)) this.rematch.ends = Math.min(this.rematch.ends, now + ALL_IN_MS);
+  }
+
+  // The owner offers a rematch (or a new series): everyone it's for has REMATCH_MS to accept or
+  // sit it out.
+  offerRematch(now) {
+    // (asked: who's seen the invite; anyone first asked late, coming back from a duel, gets at
+    // least ALL_IN_MS to answer.)
+    this.rematch = { ends: now + REMATCH_MS, yes: new Set(), no: new Set(), asked: new Set(), sent: '' };
+    this.allIn(now);
+    this.pushRematch(now);
+  }
+
+  // The time's up (and no duels on): whoever sat it out watches; the rest play. With player
+  // rotation, someone takes a turn out (see rotate). Too few: the lobby.
+  startRematch(now) {
+    const r = this.rematch;
+    // (Everyone who played but didn't accept: said no, didn't answer, or was moved to spectate.)
+    const out = this.players.filter((p) => p.kind === 'person' && !p.left && !p.owner && (p.seated || p.sitOut) && !r.yes.has(p));
+    this.rematch = null;
+    for (const p of this.players) p.sitOut = false;
+    for (const p of [...r.no, ...out]) Object.assign(p, { seated: false, sitOut: true });
+    this.pushRematch(now);
+    this.rotate();
+    if (this.players.filter((p) => p.seated && !p.left).length < 2) return this.ownerCommand({ t: 'lobby' }, now);
+    if (this.series?.over) {
+      Object.assign(this.series, { round: 1, over: false });
+      for (const p of this.players) p.wins = 0;
+    }
+    this.closeDuels();
+    this.tidy();
+    this.startMatch(now);
+  }
+
+  // Everyone hears about the invite (null: none), when anything about it changes (each second
+  // the countdown ticks).
+  pushRematch(now) {
+    const r = this.rematch;
+    const idx = (set) => [...set].map((p) => this.players.indexOf(p)).filter((i) => i >= 0);
+    const view = r && { left: Math.max(0, Math.ceil((r.ends - now) / 1000)), invited: this.invitedList(now), yes: idx(r.yes), no: idx(r.no), series: !!this.series, allIn: this.everyoneIn(now), duels: this.duelsBusy() };
+    const key = JSON.stringify(view);
+    if (r && key === r.sent) return;
+    if (r) r.sent = key;
+    const owner = this.players.find((p) => p.owner)?.name ?? '';
+    this.players.forEach((p, you) => p.send?.({ t: 'rematch', r: view, owner, you }));
   }
 
   // Everyone who sees this match (its players, and whoever's watching).
@@ -390,6 +612,7 @@ export class Room {
       return this.pushDuels(now);
     }
     this.crownName = winner >= 0 ? this.players[winner].name : null;
+    this.lastScores = m.slots.map((i, f) => ({ p: this.players[i], stocks: m.world.fighters[f]?.stocks ?? 0, kos: m.world.fighters[f]?.kos ?? 0 }));
     if (this.series && winner >= 0) {
       const w = this.players[winner];
       w.wins = (w.wins ?? 0) + 1;
