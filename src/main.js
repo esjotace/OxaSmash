@@ -1,5 +1,5 @@
 // Menus, lobby and results (plain DOM), and starting matches in the right mode.
-import { OnlineRoom, RoomList, cleanCode, cleanName, describeNetError, CODE_LENGTH, PRACTICE_LAG } from './net/room.js';
+import { OnlineRoom, RoomList, cleanCode, cleanName, describeNetError, CODE_LENGTH, PRACTICE_LAG, PRACTICE_DELAY } from './net/room.js';
 import { DUEL_MODES } from './net/duels.js';
 import { rulesPicker, PRESETS } from './rulesui.js';
 import { PLAYER_COLORS } from './game/palette.js';
@@ -9,7 +9,7 @@ import { hasIcon, iconFrame, BUTTONS_PER_ROW, ICON_STYLES } from './game/padicon
 import { STAGES, DEFAULT_STAGE, MIXED, isStageId, rollStage } from './sim/stage.js';
 import { CHARACTERS, pickCast } from './game/cast.js';
 import { startPadNav } from './padnav.js';
-import { settings, ui, firstPad, padStyle, padButtonName, saveSettings, deviceSettings, padBindings, deviceLabel, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
+import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
 
 // A fresh random character for each player, every match; players who picked one (pref) get it.
 function cast(roster) {
@@ -31,6 +31,7 @@ const BUILD = import.meta.env.VITE_APP_BUILD;
 $('version').textContent = BUILD ? `${VERSION} · build ${BUILD}` : VERSION;
 // (Practice lag on: said in the corner, so it's not mistaken for a slow connection.)
 if (PRACTICE_LAG.ms || PRACTICE_LAG.jitter) $('version').textContent += ` · practice lag ${PRACTICE_LAG.ms} ms${PRACTICE_LAG.jitter ? ` ±${PRACTICE_LAG.jitter}` : ''}`;
+if (PRACTICE_DELAY !== null) $('version').textContent += ` · input delay ${PRACTICE_DELAY}`;
 
 // Phaser is most of the download, so the menu shows first and the game loads right after.
 let gameModule = null;
@@ -112,7 +113,6 @@ async function busy(button, label, work) {
 }
 
 const myName = () => cleanName($('name').value);
-const livesFrom = (id) => Number($(id).value) || RULES.stocks;
 
 function playerRow(name, colorIndex, tag) {
   const li = document.createElement('li');
@@ -134,11 +134,15 @@ function playerRow(name, colorIndex, tag) {
 // The stage picked in a menu (a stage, or MIXED for a random one), or the default if the choice
 // isn't a known stage.
 const stageFrom = (id) => (Object.hasOwn(STAGES, $(id).value) || $(id).value === MIXED ? $(id).value : DEFAULT_STAGE);
+// The stages every stage picker offers (the first one picked to start with).
+const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['dungeon', 'Dungeon'], ['village', 'Village'], ['warehouse', 'Warehouse'], ['bajaita', 'La Bajaita'], ['azotea', 'La Azotea']];
 
 // extra: { rules, stormPace } for Same screen matches.
-function playLocal(roster, stocks, stage = stageFrom('stage'), training = false, extra = {}) {
+function playLocal(roster, stocks, stage = MIXED, training = false, extra = {}) {
+  // (A stage without a storm, unless the rules set one.)
+  if (!extra.stormPace && STAGES[stage]?.noStorm) extra = { ...extra, stormPace: 'off' };
   state.role = null;
-  state.botMatch = roster.every((p) => p.kind === 'bot'); // (just watching: see Bot match)
+  state.botMatch = !!extra.fromLobby; // (from the Solo / Bot match lobby: back there after)
   state.onScreen = roster.filter((p) => p.kind === 'kbm' || p.kind.startsWith('pad'));
   state.lastLocal = { roster, stocks, stage, training, extra };
   show(null);
@@ -150,7 +154,7 @@ function playLocal(roster, stocks, stage = stageFrom('stage'), training = false,
 $('playTraining').onclick = () => {
   state.series = null;
   state.crownName = null;
-  state.training = { stage: $('trainStage').value, count: 1, level: $('trainBot').value, attack: true, pickup: { melee: false, gun: false, grenade: false }, health: { mode: 'normal', value: 0 }, infinite: true, hitboxes: false };
+  state.training = { stage: $('trainStage').value, count: 1, level: $('trainBot').value, attack: true, pickup: { melee: false, gun: false, grenade: false }, health: { mode: 'normal', value: 0, after: 2 }, infinite: true, hitboxes: false };
   playTraining();
 };
 
@@ -160,56 +164,82 @@ function playTraining() {
   const roster = [{ name: myName(), kind: 'kbm' }];
   for (let i = 1; i <= d.count; i++) roster.push({ name: d.count > 1 ? `Dummy ${i}` : 'Dummy', kind: 'bot', level: d.level });
   // (A random stage is rolled again each time.)
-  playLocal(roster, RULES.stocks, d.stage === 'mixed' ? MIXED : 'training', true, { dummies: d });
+  playLocal(roster, RULES.stocks, Object.hasOwn(STAGES, d.stage) || d.stage === MIXED ? d.stage : 'training', true, { dummies: d });
 }
 
-$('playBots').onclick = () => {
-  state.series = null;
-  state.crownName = null;
-  const level = $('botLevel').value;
-  const roster = [{ name: myName(), kind: 'kbm', pref: deviceSettings('kbm').character }];
-  for (let i = 1; i <= Number($('botCount').value); i++) roster.push({ name: `Bot ${i}`, kind: 'bot', level });
-  playLocal(roster, livesFrom('stocks'));
-};
+// ---- Main menu ----------------------------------------------------------------
+// The modes are slanted bars, one open at a time; a closed bar's buttons and fields can't be
+// reached (inert), with the mouse, the keyboard or a controller.
+const menuBars = [...document.querySelectorAll('#menu .bar')];
+function openBar(bar) {
+  for (const b of menuBars) {
+    const on = b === bar;
+    b.classList.toggle('on', on);
+    b.querySelector('.bar-head').setAttribute('aria-expanded', String(on));
+    b.querySelector('.bar-body').inert = !on;
+  }
+}
+for (const bar of menuBars) bar.querySelector('.bar-head').onclick = () => openBar(bar.classList.contains('on') ? null : bar);
 
-// ---- Bot match ----------------------------------------------------------------
-// Solo: a match between bots (2 to 4, each at its own level), with the same rules as a room, to
-// watch with the spectator camera.
+// ---- Solo and Bot match ---------------------------------------------------------
+// One lobby for both: Solo (you and 1 to 3 bots) and Bot match (2 to 4 bots to watch with the
+// spectator camera). Each bot has its own level; the stage and the rules are the ones online rooms
+// use (the same rules screen, remembered between games).
 
-const botMatch = { bots: ['normal', 'normal'] };
+// mode: 'solo' or 'watch'; bots: each bot's level, per mode.
+const botMatch = { mode: 'solo', bots: { solo: ['normal'], watch: ['normal', 'normal'] } };
 const BOT_LEVELS = [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']];
 
-$('botMatch').onclick = () => {
+function openBotLobby(mode) {
+  botMatch.mode = mode;
   renderBotLobby();
   show('botLobby');
-};
+}
+$('playBots').onclick = () => openBotLobby('solo');
+$('botMatch').onclick = () => openBotLobby('watch');
 
 function renderBotLobby() {
+  const solo = botMatch.mode === 'solo';
+  const bots = botMatch.bots[botMatch.mode];
+  $('botTitle').textContent = solo ? 'Solo' : 'Bot match';
+  $('botHint').textContent = solo ? 'You against the bots. Add or remove bots, pick each one’s level, the stage and the rules.' : 'Set up the bots and watch them fight. ←/→ switch who the camera follows, Space for a free camera, ↑/↓ zoom.';
+  $('botStart').textContent = solo ? 'Play' : 'Watch';
+  // (Solo: you first, then the bots.)
+  const you = solo ? [playerRow(myName(), 0, 'You')] : [];
   $('botList').replaceChildren(
-    ...botMatch.bots.map((level, i) => {
-      const li = playerRow(`Bot ${i + 1}`, i, '');
+    ...you,
+    ...bots.map((level, i) => {
+      const li = playerRow(`Bot ${i + 1}`, i + you.length, '');
       const pick = document.createElement('select');
       pick.setAttribute('aria-label', `Bot ${i + 1}'s level`);
       for (const [value, text] of BOT_LEVELS) pick.append(new Option(text, value, false, value === level));
-      pick.onchange = () => (botMatch.bots[i] = pick.value);
+      pick.onchange = () => (bots[i] = pick.value);
       const remove = document.createElement('button');
       remove.className = 'btn small ghost';
       remove.textContent = 'Remove';
-      remove.disabled = botMatch.bots.length <= 2;
+      remove.disabled = bots.length + you.length <= 2;
       remove.onclick = () => {
-        botMatch.bots.splice(i, 1);
+        bots.splice(i, 1);
         renderBotLobby();
       };
       li.append(pick, remove);
       return li;
     }),
   );
-  $('botAdd').disabled = botMatch.bots.length >= RULES.maxPlayers;
-  $('botRules').textContent = `Stage: ${stageName(roomRules().stage)} · Rules: ${rulesSummary()}`;
+  $('botAdd').disabled = bots.length + you.length >= RULES.maxPlayers;
+  if ($('botStage').value !== $('roomStage').value) $('botStage').value = $('roomStage').value;
+  $('botRules').textContent = `Rules: ${rulesSummary()}`;
 }
 
 $('botAdd').onclick = () => {
-  if (botMatch.bots.length < RULES.maxPlayers) botMatch.bots.push('normal');
+  const bots = botMatch.bots[botMatch.mode];
+  if (bots.length + (botMatch.mode === 'solo' ? 1 : 0) < RULES.maxPlayers) bots.push('normal');
+  renderBotLobby();
+};
+// The stage, right here (the rules screen shows it too).
+$('botStage').onchange = () => {
+  $('roomStage').value = $('botStage').value;
+  $('roomStage').dispatchEvent(new Event('change'));
   renderBotLobby();
 };
 $('botRulesBtn').onclick = () => {
@@ -220,10 +250,12 @@ $('botRulesBtn').onclick = () => {
 $('botBack').onclick = () => show('menu');
 $('botStart').onclick = () => {
   const r = roomRules();
+  const solo = botMatch.mode === 'solo';
+  const bots = botMatch.bots[botMatch.mode].map((level, i) => ({ name: `Bot ${i + 1}`, kind: 'bot', level }));
+  const roster = solo ? [{ name: myName(), kind: 'kbm', pref: deviceSettings('kbm').character }, ...bots] : bots;
   state.crownName = null;
-  state.series = r.rounds > 1 ? { rounds: r.rounds, wins: botMatch.bots.map(() => 0), round: 1 } : null;
-  const roster = botMatch.bots.map((level, i) => ({ name: `Bot ${i + 1}`, kind: 'bot', level }));
-  playLocal(roster, r.stocks, r.stage, false, { rules: r.rules, stormPace: r.stormPace, crownRule: r.crownRule });
+  state.series = r.rounds > 1 ? { rounds: r.rounds, wins: roster.map(() => 0), round: 1 } : null;
+  playLocal(roster, r.stocks, r.stage, false, { rules: r.rules, stormPace: r.stormPace, crownRule: r.crownRule, fromLobby: true });
 };
 
 // ---- Same screen -------------------------------------------------------------
@@ -233,7 +265,7 @@ $('botStart').onclick = () => {
 const connectedPads = () => [...(navigator.getGamepads?.() ?? [])].filter((g) => g && g.connected).map((g) => g.index).filter((n) => n < 4);
 const DEVICES = ['kbm', 'pad0', 'pad1', 'pad2', 'pad3'];
 const setup = { step: 1, players: 2, devices: ['kbm', 'pad0', 'pad1', 'pad2'] };
-for (const id of ['ruleStage', 'roomStage', 'lobbyStage']) for (const option of $('stage').options) $(id).append(new Option(option.text, option.value, false, option.selected));
+for (const id of ['ruleStage', 'roomStage', 'lobbyStage', 'botStage', 'trainStage', 'dumStage']) for (const [value, text] of STAGE_CHOICES) $(id).append(new Option(text, value));
 // The rules pickers (presets, or custom), remembered between games: Same screen's, and the one
 // online rooms and Bot match share.
 const localRules = rulesPicker('rule', 'oxasmash.rules.local');
@@ -429,15 +461,6 @@ function enterRoom(how, button, label) {
 }
 
 $('startMatch').onclick = () => state.room?.command('start');
-// The owner's rules pick, from the lobby: a preset at once; Custom opens the whole rules screen.
-for (const key of PRESETS) $('lobbyPreset').append(new Option(DUEL_MODES[key].name, key));
-$('lobbyPreset').append(new Option('Custom rules…', 'custom'));
-$('lobbyPreset').onchange = () => {
-  roomPicker.choose($('lobbyPreset').value);
-  if ($('lobbyPreset').value === 'custom') return $('lobbyRulesBtn').click();
-  state.room?.command('rules', { rules: roomRules() });
-};
-
 // The owner's stage pick, from the lobby (the rules screen shows it too).
 $('lobbyStage').onchange = () => {
   $('roomStage').value = $('lobbyStage').value;
@@ -547,7 +570,6 @@ function renderLobby() {
   // (The stage on its own: the owner picks it right here; everyone else sees it named.)
   const r = state.lobby?.rules;
   if (r && $('lobbyStage').value !== r.stage) $('lobbyStage').value = r.stage;
-  if (r) $('lobbyPreset').value = PRESETS.includes(r.preset) ? r.preset : 'custom';
   $('lobbyRules').textContent = r ? `${owner ? '' : `Stage: ${stageName(r.stage)} · `}Rules: ${rulesSummary(r)}` : '';
   $('startMatch').hidden = !owner;
   $('startMatch').disabled = players.length < 2;
@@ -1074,6 +1096,8 @@ function renderDummies() {
   $('dumHealth').value = d.health.mode;
   $('dumHealthValue').value = String(d.health.value);
   $('dumHealthValue').disabled = d.health.mode === 'normal';
+  $('dumHealthAfter').value = String(d.health.after ?? 2);
+  $('dumHealthAfter').disabled = d.health.mode !== 'banded';
   $('dumLevel').value = d.level;
   $('dumAttack').checked = d.attack;
   $('dumMelee').checked = d.pickup.melee;
@@ -1088,8 +1112,8 @@ function dummiesChanged() {
   if (!d) return;
   const count = Number($('dumCount').value);
   const stage = $('dumStage').value;
-  const health = { mode: $('dumHealth').value, value: Math.max(0, Math.min(300, Number($('dumHealthValue').value) || 0)) };
-  const healthChanged = health.mode !== d.health.mode || health.value !== d.health.value;
+  const health = { mode: $('dumHealth').value, value: Math.max(0, Math.min(300, Number($('dumHealthValue').value) || 0)), after: Math.max(0.5, Math.min(10, Number($('dumHealthAfter').value) || 2)) };
+  const healthChanged = health.mode !== d.health.mode || health.value !== d.health.value || health.after !== d.health.after;
   d.health = health;
   Object.assign(d, { level: $('dumLevel').value, attack: $('dumAttack').checked, pickup: { melee: $('dumMelee').checked, gun: $('dumGun').checked, grenade: $('dumGrenade').checked } });
   renderDummies();
@@ -1104,7 +1128,7 @@ function dummiesChanged() {
     if (healthChanged) m.setDummyHealth(d.health);
   });
 }
-for (const id of ['dumStage', 'dumCount', 'dumLevel', 'dumAttack', 'dumMelee', 'dumGun', 'dumGrenade', 'dumHealth', 'dumHealthValue']) $(id).onchange = dummiesChanged;
+for (const id of ['dumStage', 'dumCount', 'dumLevel', 'dumAttack', 'dumMelee', 'dumGun', 'dumGrenade', 'dumHealth', 'dumHealthValue', 'dumHealthAfter']) $(id).onchange = dummiesChanged;
 
 // Volumes: saved and heard right away.
 for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['volAnnouncer', 'announcer']]) {
@@ -1175,7 +1199,7 @@ function renderBindings() {
       const gp = slotPad(editing.pad);
       const button = padBindings(editing.pad)[action];
       const icon = gp && gp.mapping === 'standard' && hasIcon(padStyle(gp), button) ? { style: padStyle(gp), button } : null;
-      return row(label, padButtonName(button, gp), () => startWaiting('pad', action), waiting?.kind === 'pad' && waiting.action === action, icon);
+      return row(label, padActionName(padBindings(editing.pad), action, gp), () => startWaiting('pad', action), waiting?.kind === 'pad' && waiting.action === action, icon);
     }),
   );
   $('padFor').textContent = `Button layout for ${deviceLabel(editing.pad)}.`;

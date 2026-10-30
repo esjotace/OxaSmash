@@ -22,7 +22,7 @@ const p = (x, y) => ({ x, y });
 // Lower sections. Each build gets a random number source (for timing offsets).
 //   edge: allowed at the ends of the stage (next to the spike walls).
 //   rough: a gap, a cage or a spike floor; two never sit side by side.
-//   deadly: falling in costs a life; the storm only ends here if the upper section has footing.
+//   deadly: falling in costs a life.
 //   high: the section reaches up to y = -96, so the upper section above it must start higher.
 //   unique: at most one per stage.
 // Movers are stage pieces that move or change (see MOVERS in constants.js). Glued floors slow you
@@ -67,13 +67,6 @@ const LOWER = {
       doors: [p(216, 0)],
       pickupSpots: [p(40, 0)],
     }),
-  },
-  // The pitfall (exactly one per stage): floor stubs and a stepping stone over a drop to your death.
-  pitfall: {
-    weight: 0,
-    rough: true,
-    deadly: true,
-    build: () => ({ blocks: [stone(0, 0, 3, 4), stone(208, 0, 3, 4), stone(104, -16, 3)] }),
   },
   // The cage: a sunken 1v1 pit with a hard floor. Two hard walls, a narrow opening between the
   // lips above, and the only way out is up (a full jump plus the air jump). A weapon waits inside.
@@ -180,24 +173,25 @@ const LOWER = {
     }),
   },
   // Crumbling floor: stone tiles over a spike floor. A tile shakes when stood on, falls away, and
-  // comes back a few seconds later.
+  // comes back a few seconds later. The tiles are thin (you jump up through them), so nobody caught
+  // under one when it comes back is trapped there.
   crumble: {
     weight: 2,
     rough: true,
     build: () => ({
       blocks: [stone(0, 0, 2, 4), stone(224, 0, 2, 4)],
-      movers: Array.from({ length: 6 }, (_, k) => ({ kind: 'crumble', ...stone(32 + k * 32, 0, 2), y: 0 })),
+      movers: Array.from({ length: 6 }, (_, k) => ({ kind: 'crumble', ...stone(32 + k * 32, 0, 2), oneWay: true, y: 0 })),
       spikes: [{ x: 32, y: 32, width: 12, up: true }],
     }),
   },
   // Sticky crumble: crumbling tiles coated in glue, over a spike floor. Stuck to a tile you can't
-  // jump off it, only walk; when it falls, you fall with it.
+  // jump off it, only walk; when it falls, you fall with it. (Thin too, like the crumbling floor.)
   stickyCrumble: {
     weight: 2,
     rough: true,
     build: () => ({
       blocks: [stone(0, 0, 2, 4), stone(224, 0, 2, 4)],
-      movers: Array.from({ length: 6 }, (_, k) => ({ kind: 'crumble', ...glued(stone(32 + k * 32, 0, 2)), y: 0 })),
+      movers: Array.from({ length: 6 }, (_, k) => ({ kind: 'crumble', ...glued(stone(32 + k * 32, 0, 2)), oneWay: true, y: 0 })),
       spikes: [{ x: 32, y: 32, width: 12, up: true }],
     }),
   },
@@ -294,6 +288,23 @@ const UPPER = {
   },
 };
 
+// The arena (XL: ARENA_SPAN sections wide), one in every random dungeon, where the storm ends:
+// a floating stone slab with a pitfall on each side, after Smash's Final Destination; Battlefield
+// adds three thin wooden platforms over it. Each also comes with cover on the slab. Local
+// positions (0..ARENA_SPAN * SECTION); the slab's span is `slab`.
+export const ARENA_SPAN = 3;
+const ARENA_W = ARENA_SPAN * SECTION; // 768
+const SLAB = { x: 96, w: 36 }; // a 576 px slab, a 96 px pit each side
+const slab = () => stone(SLAB.x, 0, SLAB.w, 2);
+const fdSpawns = () => [p(240, 0), p(528, 0), p(384, 0)];
+const bfPlatforms = () => [ledge(176, -64, 10), ledge(432, -64, 10), ledge(304, -128, 10)];
+const ARENAS = {
+  destination: { weight: 1, build: () => ({ blocks: [slab()], spawns: fdSpawns(), pickupSpots: [p(384, 0)] }) },
+  destinationCover: { weight: 1, build: () => ({ blocks: [slab(), boxes(184, 0), boxes(552, 0)], spawns: fdSpawns(), pickupSpots: [p(384, 0)] }) },
+  battlefield: { weight: 1, build: () => ({ blocks: [slab(), ...bfPlatforms()], spawns: [...fdSpawns(), p(384, -128)], pickupSpots: [p(384, 0), p(384, -128)] }) },
+  battlefieldCover: { weight: 1, build: () => ({ blocks: [slab(), ...bfPlatforms(), boxes(120, 0), boxes(616, 0)], spawns: [...fdSpawns(), p(384, -128)], pickupSpots: [p(384, 0), p(384, -128)] }) },
+};
+
 function rng(seed) {
   let a = seed >>> 0;
   return () => {
@@ -314,31 +325,38 @@ function pickWeighted(rnd, table, names) {
 }
 
 // Which lower and upper section goes in each column.
+// arena: { at, kind }: the arena takes columns at..at + ARENA_SPAN - 1 (never the end ones); its
+// pits stand in for the pitfall. Next to it, no rough section (a gap beside its pit).
 export function planSections(seed) {
   const rnd = rng(seed);
-  const pitfallAt = 1 + Math.floor(rnd() * (SECTIONS - 2));
+  const arena = { at: 1 + Math.floor(rnd() * (SECTIONS - ARENA_SPAN - 1)), kind: pickWeighted(rnd, ARENAS, Object.keys(ARENAS)) };
+  const inArena = (i) => i >= arena.at && i < arena.at + ARENA_SPAN;
   const lower = [];
   for (let i = 0; i < SECTIONS; i++) {
-    if (i === pitfallAt) {
-      lower.push('pitfall');
+    if (inArena(i)) {
+      lower.push('arena');
       continue;
     }
     const ok = Object.keys(LOWER).filter((n) => {
       const L = LOWER[n];
       if (L.weight === 0 || n === lower[i - 1] || (L.unique && lower.includes(n))) return false;
       if ((i === 0 || i === SECTIONS - 1) && !L.edge) return false;
-      return !(L.rough && ((i > 0 && LOWER[lower[i - 1]].rough) || i + 1 === pitfallAt));
+      return !(L.rough && ((i > 0 && LOWER[lower[i - 1]]?.rough) || inArena(i - 1) || inArena(i + 1)));
     });
     lower.push(pickWeighted(rnd, LOWER, ok));
   }
   const upper = [];
   for (let i = 0; i < SECTIONS; i++) {
+    if (inArena(i)) {
+      upper.push(arena.kind);
+      continue;
+    }
     const roof = LOWER[lower[i]].high;
     const ok = Object.keys(UPPER).filter((n) => n !== upper[i - 1] && (!roof || UPPER[n].high) && (roof || !UPPER[n].needsRoof));
     upper.push(pickWeighted(rnd, UPPER, ok));
   }
   const mirror = lower.map(() => rnd() < 0.5);
-  return { lower, upper, mirror };
+  return { lower, upper, mirror, arena };
 }
 
 // Order the spawn points so the first ones are spread out (fighter i starts at spawns[i]); the
@@ -355,20 +373,23 @@ function orderSpawns(spawns) {
   return [...out, ...left];
 }
 
-// Can the storm's final zone be this section? Not over a deadly drop with nothing to stand on
-// above it, and not the cage when a hard roof seals it (nobody could be knocked out in there).
-function canEndHere(name, up, x0) {
-  if (LOWER[name].deadly) return (up.blocks ?? []).length > 0;
-  if (name === 'cage') return !(up.blocks ?? []).some((b) => !b.oneWay && !b.cover && b.x < x0 + 176 && b.x + b.w > x0 + 80);
-  return true;
-}
-
 export function buildMixedStage(seed) {
-  const { lower, upper, mirror } = planSections(seed);
+  const { lower, upper, mirror, arena } = planSections(seed);
   const timing = rng(seed ^ 0x9e3779b9);
   const st = { blocks: [], movers: [], spikes: [], spawns: [], doors: [], pickupSpots: [], barrels: [], vases: [], sections: [] };
   for (let i = 0; i < SECTIONS; i++) {
     const x0 = i * SECTION;
+    // The arena: built once, across its columns (it's symmetric, never mirrored).
+    if (lower[i] === 'arena') {
+      if (i === arena.at) {
+        const part = ARENAS[arena.kind].build();
+        for (const b of part.blocks) st.blocks.push({ ...b, x: x0 + b.x });
+        for (const key of ['spawns', 'pickupSpots']) for (const q of part[key] ?? []) st[key].push({ ...q, x: x0 + q.x });
+        st.arena = { kind: arena.kind, left: x0 + SLAB.x, right: x0 + SLAB.x + SLAB.w * TILE };
+      }
+      st.sections.push({ left: x0, right: x0 + SECTION, lower: 'arena', upper: arena.kind });
+      continue;
+    }
     const m = mirror[i];
     const px = (x) => x0 + (m ? SECTION - x : x);
     const bx = (x, w) => x0 + (m ? SECTION - x - w : x);
@@ -382,7 +403,7 @@ export function buildMixedStage(seed) {
         for (const q of part[key] ?? []) st[key].push({ ...q, x: px(q.x) });
       }
     }
-    st.sections.push({ left: x0, right: x0 + SECTION, lower: lower[i], upper: upper[i], final: canEndHere(lower[i], parts[1], x0) });
+    st.sections.push({ left: x0, right: x0 + SECTION, lower: lower[i], upper: upper[i] });
   }
   // Spike walls at both ends of the floor.
   st.spikes.push({ x: 0, y: -112, height: 7, face: 1 }, { x: W - TILE, y: -112, height: 7, face: -1 });

@@ -21,6 +21,7 @@ from PIL import Image, ImageDraw
 OVERRIDES = {
     "smg": {"grip": [10.5, 9]},  # the guess lands between the grip and the magazine
     "sniper": {"grip": [11, 7]},  # the guess lands on the stock
+    "snoozer": {"grip": [11, 7]},  # (the sniper, recoloured)
     "bow": {"grip": [3, 16], "muzzle": [5, 16]},  # held mid-bow; the arrow leaves from the string
     "cards": {"grip": [6, 6], "muzzle": [11, 5]},  # held by the middle of the card
 }

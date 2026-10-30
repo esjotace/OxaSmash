@@ -12,78 +12,157 @@
     <div id="game" aria-hidden="true"></div>
 
     <main id="menu" class="screen">
-      <div class="panel">
+      <div class="home">
         <h1 class="logo">Unos tiritos <span>ahi</span></h1>
         <p class="lede">Shoot to soften them up. Hit to send them flying. Stay out of the storm.</p>
 
-        <div class="row fields">
-          <label class="field">Your name <input id="name" maxlength="12" autocomplete="off" spellcheck="false" /></label>
-          <label class="field">Lives
-            <select id="stocks"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
-          </label>
-          <label class="field">Stage
-            <select id="stage"><option value="mixed" selected>Random dungeon</option><option value="dungeon">Dungeon</option><option value="village">Village</option><option value="warehouse">Warehouse</option></select>
-          </label>
+        <!-- The modes: slanted bars, one open at a time (see the menu bars in main.js). -->
+        <div class="bars">
+          <section class="bar" style="--c: var(--online)">
+            <button class="bar-head" aria-expanded="false"><img src="art/shotgun.png" alt="" /><span class="bar-title">Online</span><span class="bar-tag">room codes</span></button>
+            <div class="bar-body" inert><div><div class="bar-in">
+              <p>Make a room and share the code, or join a friend's.</p>
+              <div class="row">
+                <button id="createRoom" class="btn primary">Create room</button>
+                <div class="row join">
+                  <input id="joinCode" aria-label="Room code" placeholder="CODE" maxlength="5" autocomplete="off" spellcheck="false" />
+                  <button id="joinRoom" class="btn">Join</button>
+                </div>
+              </div>
+              <!-- The rooms on the server right now, best ping first (see RoomList in net/room.js). -->
+              <p id="roomListStatus" class="hint muted"></p>
+              <ul id="roomList" class="room-list"></ul>
+            </div></div></div>
+          </section>
+          <section class="bar" style="--c: var(--hot)">
+            <button class="bar-head" aria-expanded="false"><img src="art/revolver.png" alt="" /><span class="bar-title">Solo</span><span class="bar-tag">vs bots</span></button>
+            <div class="bar-body" inert><div><div class="bar-in">
+              <p>Fight bots: pick them, the stage and the rules.</p>
+              <div class="row">
+                <button id="playBots" class="btn primary">Play</button>
+                <button id="botMatch" class="btn ghost" title="Set up a match between bots and watch it">Bot match</button>
+              </div>
+            </div></div></div>
+          </section>
+          <section class="bar" style="--c: var(--gold)">
+            <button class="bar-head" aria-expanded="false"><img src="art/katana.png" alt="" /><span class="bar-title">Training</span><span class="bar-tag">endless</span></button>
+            <div class="bar-body" inert><div><div class="bar-in">
+              <p>Endless ammo and lives. Spawn any weapon and set up the dummies from the menu (Esc).</p>
+              <div class="row">
+                <label class="field small">Stage <select id="trainStage"><option value="training" selected>Training room</option></select></label>
+                <label class="field small">Dummies <select id="trainBot"><option value="dummy" selected>Stand still</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
+                <button id="playTraining" class="btn primary">Train</button>
+              </div>
+            </div></div></div>
+          </section>
+          <section class="bar" style="--c: var(--green)">
+            <button class="bar-head" aria-expanded="false"><img src="art/keyboard.png" alt="" /><span class="bar-title">Same screen</span><span class="bar-tag">2–4 players</span></button>
+            <div class="bar-body" inert><div><div class="bar-in">
+              <p>2 to 4 players on this screen: keyboard + mouse, or a controller each. Pick your rules.</p>
+              <div class="row"><button id="playLocal" class="btn primary">Set up</button></div>
+            </div></div></div>
+          </section>
         </div>
 
-        <div class="modes">
-          <section class="mode">
-            <h2>Solo</h2>
-            <p>Fight bots.</p>
-            <div class="row">
-              <label class="field small">Bots <select id="botCount"><option>1</option><option selected>2</option><option>3</option></select></label>
-              <label class="field small">Level <select id="botLevel"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
-            </div>
-            <div class="row">
-              <button id="playBots" class="btn primary">Play</button>
-              <button id="botMatch" class="btn ghost" title="Set up a match between bots and watch it">Bot match</button>
-            </div>
-          </section>
-          <section class="mode">
-            <h2>Training</h2>
-            <p>Endless ammo and lives. Spawn any weapon and set up the dummies from the menu (Esc).</p>
-            <label class="field small">Stage <select id="trainStage"><option value="training" selected>Training room</option><option value="mixed">Random stage</option></select></label>
-            <label class="field small">Dummies <select id="trainBot"><option value="dummy" selected>Stand still</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
-            <button id="playTraining" class="btn">Train</button>
-          </section>
-          <section class="mode">
-            <h2>Same screen</h2>
-            <p>2 to 4 players on this screen: keyboard + mouse, or a controller each. Pick your rules.</p>
-            <button id="playLocal" class="btn">Set up</button>
-          </section>
-          <section class="mode">
-            <h2>Online</h2>
-            <p>Make a room and share the code, or join a friend's.</p>
-            <button id="createRoom" class="btn primary">Create room</button>
-            <div class="row join">
-              <input id="joinCode" aria-label="Room code" placeholder="CODE" maxlength="5" autocomplete="off" spellcheck="false" />
-              <button id="joinRoom" class="btn">Join</button>
-            </div>
-            <!-- The rooms on the server right now, best ping first (see RoomList in net/room.js). -->
-            <p id="roomListStatus" class="hint muted"></p>
-            <ul id="roomList" class="room-list"></ul>
-          </section>
-        </div>
+        <label class="field name">Your name <input id="name" maxlength="12" autocomplete="off" spellcheck="false" /></label>
 
-        <details class="help">
-          <summary>Controls</summary>
+        <!-- The guide, in Spanish and on purpose a bit silly: the short table first (for whoever only
+             looks), the deep stuff after (for whoever min-maxes). Keys and buttons: the defaults in
+             game/settings.js. -->
+        <details class="help" lang="es">
+          <summary>Controles (y otras cosas que nadie lee)</summary>
+          <p class="help-intro">Si estás leyendo esto: felicidades, eres oficialmente la persona más responsable del grupo, este juego tiene un coñazo de mecánicas. Aprovecha la ventaja.</p>
+
+          <h3>Lo básico (para sobrevivir los primeros 10 segundos)</h3>
+          <table class="keys">
+            <thead><tr><th></th><th>Teclado y ratón</th><th>Control <span>(Xbox / Switch)</span></th></tr></thead>
+            <tbody>
+              <tr><td>Moverte</td><td><kbd>A</kbd> <kbd>D</kbd></td><td>Stick izquierdo</td></tr>
+              <tr><td>Apuntar</td><td>El ratón</td><td>Stick derecho</td></tr>
+              <tr><td>Saltar (otra vez en el aire: doble salto)</td><td><kbd>Espacio</kbd></td><td>A / B</td></tr>
+              <tr><td>Disparar</td><td>Clic izquierdo</td><td>RT / ZR</td></tr>
+              <tr><td>Golpe pesado</td><td>Clic derecho</td><td>LT / ZL</td></tr>
+              <tr><td>Golpe rápido (jab)</td><td><kbd>C</kbd></td><td>LB / L</td></tr>
+              <tr><td>Granada: mantén para apuntar, suelta para lanzar</td><td>Clic de la rueda o <kbd>G</kbd></td><td>Los dos gatillos juntos</td></tr>
+              <tr><td>Bloquear</td><td><kbd>Q</kbd> o <kbd>Shift</kbd></td><td>RB / R</td></tr>
+              <tr><td>Esquivar</td><td><kbd>F</kbd></td><td>B / A</td></tr>
+              <tr><td>Recoger</td><td><kbd>E</kbd></td><td>Y / X</td></tr>
+              <tr><td>Agacharte · tócalo dos veces para bajar de una plataforma</td><td><kbd>S</kbd></td><td>Cruz ↓ o stick abajo</td></tr>
+              <tr><td>Esconderte en una puerta</td><td><kbd>W</kbd></td><td>Cruz ↑</td></tr>
+              <tr><td>Recargar (igual recarga sola)</td><td><kbd>R</kbd></td><td>X / Y</td></tr>
+              <tr><td>Cambiar de granada</td><td>Rueda o <kbd>Z</kbd></td><td>Cruz →</td></tr>
+              <tr><td>Menú</td><td><kbd>Esc</kbd></td><td>Start / +</td></tr>
+            </tbody>
+          </table>
+          <p class="hint">¿No te gusta dónde está algo? <kbd>Esc</kbd> → Keys o Controller, y lo cambias.</p>
+
+          <h3>De qué va esto, en una línea</h3>
+          <p>Aquí la vaina es simple: se gana <strong>sacando a la gente volando</strong>. Los tiros ayudan a subir el %, los golpes pesados mandan a volar, y mientras más % tengas, más lejos vuelas. Sales del mapa o te come la tormenta: pierdes una vida.</p>
+
+          <h3>Para los que vinieron a min-maxear</h3>
           <dl>
-            <dt>Move</dt><dd><kbd>A</kbd> <kbd>D</kbd></dd>
-            <dt>Jump</dt><dd><kbd>Space</kbd>, again in the air to double jump. Tap for a short hop.</dd>
-            <dt>Down</dt><dd>Hold <kbd>S</kbd> to crouch: smaller target, low attacks. Tap <kbd>S</kbd> twice to drop through a thin platform; in the air, fall fast.</dd>
-            <dt>Block</dt><dd>Hold <kbd>Q</kbd> or <kbd>Shift</kbd> (stops melee, not bullets). Let go just as a hit lands to <strong>parry</strong> and stun the attacker; crouch-block for low hits.</dd>
-            <dt>Dodge</dt><dd><kbd>F</kbd> for half your stamina bar (the thin white line under your feet; a full bar is two dashes): a quick dash the way you hold, or backwards if you hold nothing. At the start of it bullets, melee and explosions miss you (spikes and the storm don't). Stamina also pays for shots fired crouched (with none left, crouching stops steadying your aim) and for attacking on the run (heavier weapons cost more; without enough, you stop to attack).</dd>
-            <dt>Hide</dt><dd>Stand in a doorway and press <kbd>W</kbd>. Bullets fly past you, but you can't move or shoot, and melee still hits. <kbd>W</kbd>, <kbd>S</kbd>, jump or move to come out.</dd>
-            <dt>Pick up</dt><dd><kbd>E</kbd> on a weapon, gun or grenade lying on the floor (something new turns up every few seconds).</dd>
-            <dt>Melee weapons</dt><dd><strong>Otaku Katana</strong> (light, fast; swing into bullets to send them back at the pointer) · <strong>Bolívar's Sword</strong> (heavy, balanced) · <strong>La Chola</strong> (heavy, slow, huge push; tap to swing, hold to throw it, and then it's gone) · <strong>Keyboard</strong> (light; every hit is a word, and the word decides how hard it hits). Also: <strong>Knife</strong> (light; double damage from behind; a fast, flat throw) · <strong>Machete</strong> (light, wide; every third hit in a row launches) · <strong>Nodachi</strong> (light, long; hold to charge a dash slash that launches) · <strong>Trident</strong> (takes your gun's place; tap to thrust, hold to throw it on its chain: a catch is stunned and reeled in, a miss leaves you standing there until it's back) · <strong>Shovel</strong> (heavy; swung from below, launches straight up) · <strong>Nail Bat</strong> (heavy; a home run, flat and far) · <strong>Cleaver</strong> (heavy, short, brutal) · <strong>War Hammer</strong> (heavy, slowest, biggest launch) · <strong>Bone Axe</strong> (heavy; goes through blocks). Light weapons never launch; heavy ones do. Hold the melee button to <strong>throw</strong> a light weapon: it pushes hard, and lands where it stops for you to go get back (the nodachi charges instead).</dd>
-            <dt>Shoot</dt><dd>Left click, toward the mouse. You start with a 9mm; pick up others. It reloads by itself (or <kbd>R</kbd>). Out of ammo, shooting throws the gun; with no gun, it punches. <strong>Light guns</strong> (9mm, SMG, Assault Rifle, Minigun) only add damage; <strong>heavy guns</strong> (Revolver, Shotgun, Star Blaster) push and stun; <strong>special guns</strong> (Sniper, Rocket Launcher) hit just as hard, held at the shoulder, but carry little ammo. A <strong>headshot</strong> stuns with any gun and hurts more. The weapon you used last is in your hand; the other rests on your back.</dd>
-            <dt>Grenades</dt><dd>Middle click or <kbd>G</kbd>: hold to cook it and aim, let go to throw (hold too long and it goes off in your hand). Carry two; the mouse wheel (or <kbd>Z</kbd>) picks which one goes next. <strong>Frag</strong> (big push) · <strong>Fire</strong> (big damage, sets you burning) · <strong>Smoke</strong> (a cloud nobody sees into) · <strong>Poison</strong> (a cloud that slowly hurts) · <strong>Warp</strong> (teleports you where it lands; hit someone and you swap places).</dd>
-            <dt>Melee</dt><dd>Right click, toward the mouse (hold to wind up a throw). Aim up for an uppercut.</dd>
-            <dt>Controller</dt><dd>Left stick moves, right stick aims. RT shoot, LT melee, A jump, B dodge, LB block, RB grenade, X reload, Y pick up, D-pad ↑ hide, ↓ crouch, → next grenade, Start menu. Change any of it in the menu (Esc → Controller). In Solo a controller works alongside the keyboard and mouse; in Same screen each controller is a player.</dd>
-            <dt>Menu</dt><dd><kbd>Esc</kbd> (or Start): volume, your character, and key and button bindings. While playing, the mouse stays inside the game; the menu frees it.</dd>
-            <dt>Same screen</dt><dd>2 to 4 players on one screen: one on keyboard + mouse, the rest on controllers (or all on controllers). Choose the weapons in play, lives, the storm's pace, best of 1, 3 or 5 rounds, and bots.</dd>
-            <dt>The arena</dt><dd>Solid cover stops bullets; thin platforms don't. Barrels explode. Spikes hurt. After 45 s the storm closes in: its pale edge hurts, and its deep-red wall is the new edge of the stage. Get launched into it and you lose a life.</dd>
+            <dt>Parry</dt><dd>Lo que nadie hace en este grupo. Suelta el bloqueo <strong>justo</strong> cuando te llega el golpe: el otro queda aturdido y tú quedas un burde pila on. El bloqueo para golpes, no balas. Agachado bloqueas los golpes bajos.</dd>
+            <dt>Esquive / dash</dt><dd>Al principio del dash hay frames de invencibilidad: las balas, los golpes y las explosiones te atraviesan. Los pinchos y la tormenta no: esos no perdonan. Sin dirección, esquivas hacia atrás.</dd>
+            <dt>DI</dt><dd>Cuando te mandan a volar, mantener una dirección tuerce el vuelo un poquito (hasta 15°): úsalo para no irte del mapa. El dash también tiene, y más: arriba o abajo mientras lo das lo inclina hasta 45° (en el piso, arriba es un saltito). Arriba + dash para volver a la plataforma, abajo + dash para clavarte al piso.</dd>
+            <dt>Stamina</dt><dd>La rayita blanca bajo tus pies. Llena te da para dos esquives. También la gastas disparando agachado (agachado apuntas más firme, hasta que se acaba) y pegando mientras corres (las armas pesadas cuestan más; si no te alcanza, te paras a pegar).</dd>
+            <dt>Headshot</dt><dd>Un tiro a la cabeza aturde con <em>cualquier</em> pistola y duele más. Díganle a Beto que les ayude a configurar el DPI del mouse.</dd>
+            <dt>Jab → pesado</dt><dd>El jab es rápido y flojito, pero un golpe pesado (o un tiro) justo después le corta la recuperación. Combo gratis.</dd>
+            <dt>Uppercut</dt><dd>Golpe pesado apuntando hacia arriba.</dd>
+            <dt>Lanzar el arma</dt><dd>Mantén el golpe pesado con un arma ligera: sale volando y empuja burda. Queda donde cae, así que ve a buscarla.</dd>
+            <dt>Sin balas</dt><dd>Disparar sin balas le lanza la pistola en la cara a alguien. Sin pistola, a puño limpio. La dignidad es opcional.</dd>
+            <dt>Saltos</dt><dd>Un toque rápido es un saltito corto. Agacharte en el aire te hace caer rápido.</dd>
+            <dt>Esconderte</dt><dd>En una puerta, <kbd>W</kbd>: las balas te pasan de largo. Pero no te mueves ni disparas, y los golpes sí te pegan, así que no te pongas muy cómodo. Sales con <kbd>W</kbd>, <kbd>S</kbd>, saltando o moviéndote.</dd>
+            <dt>Dos armas</dt><dd>La que usaste de último está en la mano; la otra, en la espalda.</dd>
           </dl>
+
+          <h3>Armas cuerpo a cuerpo</h3>
+          <p>Regla de oro: <strong>las ligeras empujan menos pero gastan menos stamina; las pesadas empujan más y usan más stamina.</strong> (Los nombres están como salen en el juego.)</p>
+          <dl>
+            <dt>Ligeras</dt><dd><strong>Otaku Katana</strong>: rápida; si cortas una bala, la devuelves hacia donde apuntas (sí, como en el anime)<br /><strong>Keyboard</strong>: cada golpe es una palabra, y la palabra decide cuánto duele<br /><strong>Knife</strong>: doble daño por la espalda; se lanza rápido y recto<br /><strong>Machete</strong>: amplio; cada tercer golpe seguido sí manda a volar<br /><strong>Nodachi</strong>: larga; en vez de lanzarla, mantén para cargar un tajo con dash que manda a volar.</dd>
+            <dt>Pesadas</dt><dd><strong>Bolívar's Sword</strong>: balanceada, como debe ser<br /><strong>La Chola</strong>: lenta y empuja una barbaridad; toca para pegar, mantén para lanzarla… y ahí se fue, no vuelve<br /><strong>Shovel</strong>: de abajo pa' arriba, directo al cielo<br /><strong>Oooga Booga</strong>: el garrote del cavernícola; mantén para cargarlo y lo manda plano y lejos. Bonk<br /><strong>Cleaver</strong>: corto y brutal<br /><strong>War Hammer</strong>: la más lenta, la que más lejos manda<br /><strong>Bone Axe</strong>: atraviesa el bloqueo.</dd>
+            <dt>Trident</dt><dd>Va en el puesto de la pistola. Toca para pinchar; mantén para lanzarlo con su cadena: si atrapas a alguien, queda aturdido y te lo traes. Si fallas, te quedas ahí parado esperando a que vuelva. Alto riesgo, alto estilo.</dd>
+          </dl>
+
+          <h3>Pistolas</h3>
+          <dl>
+            <dt>Ligeras</dt><dd>9mm (con la que empiezas), SMG, Assault Rifle, Minigun: solo suben el %.</dd>
+            <dt>Pesadas</dt><dd>Revolver, Shotgun, Star Blaster: empujan y aturden.</dd>
+            <dt>Especiales</dt><dd>Sniper, Rocket Launcher: pegan igual de duro, van al hombro, pero traen poquitas balas. Úsalas con cariño.</dd>
+            <dt>The Snoozer</dt><dd>El sniper morado. Una sola bala, y casi no hace daño, pero al que le pega <strong>se queda dormido 3 segundos</strong>: tirado en el piso, sin poder hacer nada... salvo patalear: si mashea movimientos (izquierda-derecha, saltar, dash, abajo; repetir lo mismo cuenta menos) llena la barrita azul y se despierta a los 2. Cualquier golpe lo despierta, así que el primero que le des que cuente (pista: Oooga Booga cargado). Como todas las especiales, no se puede disparar desde detrás de cobertura.</dd>
+          </dl>
+
+          <h3>Granadas</h3>
+          <p>Llevas dos, y eliges cuál sale. Mantén para cocinarla y apuntar… pero si la cocinas demasiado, te explota en la mano. Y sí, va a pasar.</p>
+          <dl>
+            <dt>Frag</dt><dd>Empuja burda.</dd>
+            <dt>Fire</dt><dd>Mucho daño, y te prende.</dd>
+            <dt>Smoke</dt><dd>Una nube donde nadie ve nada.</dd>
+            <dt>Poison</dt><dd>Una nube que duele poquito a poco.</dd>
+            <dt>Drowsy Gas</dt><dd>Una nube rosada que da sueño. Si la tocas, vas 30% más lento y en 3 segundos te duermes. Para sacudírtelo: muévete a lo loco (izquierda-derecha, saltar, dash, abajo llenan la barrita rosada; caminar derecho no cuenta y repetir lo mismo cuenta menos) o que te peguen, que también despierta. Quedarse quieto adentro es la peor idea.</dd>
+            <dt>Warp</dt><dd>Te teletransporta a donde cae. Si le pega a alguien, intercambian lugares.</dd>
+          </dl>
+
+          <h3>Cosas raras</h3>
+          <dl>
+            <dt>Ring of Cat</dt><dd>Un anillo verde que ocupa tus dos espacios de granada (si agarras una granada, el anillo se va). Con el botón de granada te vuelves un gato al azar; otra vez y vuelves a ser tú. Tiene 7 usos (los puntitos verdes bajo tus pies). Un gato corre el doble de rápido, salta y hace dash, pero no puede pelear: si atacas (lo que sea, granadas incluidas) vuelves a ser tú y el ataque sale igual. También se rompe si te hacen 10% de daño, si te cae cualquier otro efecto o si pierdes una vida. Si el gato se pone soñoliento, se acuesta y se duerme, como buen gato.</dd>
+            <dt>Polymorph Potion</dt><dd>La poción arcoíris: a todos los que salpica (tú incluido, cuidado) los vuelve un animal al azar por hasta 3 segundos. Un animal solo camina y salta. Cualquier daño, cualquier efecto o perder una vida lo devuelve a la normalidad. Y es chiquito: apúntale bajito.</dd>
+          </dl>
+
+          <h3>El mapa también juega</h3>
+          <dl>
+            <dt>Cobertura</dt><dd>Lo sólido para balas. Las plataformas finas (madera, tablas) no: las atraviesas tú y las balas también.</dd>
+            <dt>Cosas</dt><dd>Los barriles explotan. Los pinchos duelen. Cada tantos segundos aparece algo nuevo en el piso: agárralo antes que los demás.</dd>
+            <dt>La tormenta</dt><dd>A los 45 segundos empieza a cerrarse. El borde pálido duele; la pared roja oscura es el nuevo borde del mapa. Si te mandan contra ella, pierdes una vida.</dd>
+          </dl>
+
+          <h3>Modos y menú</h3>
+          <dl>
+            <dt>Misma pantalla</dt><dd>De 2 a 4 en una pantalla: uno con teclado y ratón, los demás con control (o todos con control). Tú eliges armas, vidas, la tormenta, rondas y bots.</dd>
+            <dt>Solo</dt><dd>Un control funciona junto al teclado y el ratón: usa el que quieras.</dd>
+            <dt>Menú</dt><dd><kbd>Esc</kbd> (o Start): volumen, tu personaje, teclas y botones. Mientras juegas, el ratón queda atrapado en el juego; el menú lo suelta.</dd>
+          </dl>
+
+          <p class="help-outro">Recuerda la regla de oro: si no te pegan, no te quitan vida.</p>
         </details>
       </div>
       <p id="version"></p>
@@ -104,8 +183,7 @@
           <button id="addBot" class="btn small">Add bot</button>
           <label class="field small">Level <select id="lobbyBotLevel"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
           <label class="field small">Stage <select id="lobbyStage"></select></label>
-          <label class="field small">Rules <select id="lobbyPreset"></select></label>
-          <button id="lobbyRulesBtn" class="btn small ghost">All rules…</button>
+          <button id="lobbyRulesBtn" class="btn small ghost">Rules</button>
         </div>
         <p id="lobbyRules" class="muted"></p>
         <div class="row">
@@ -116,14 +194,15 @@
       </div>
     </main>
 
-    <!-- Solo: a match between bots, to watch (each bot's level, then the same rules as a room). -->
+    <!-- Solo, and Bot match (bots only, to watch): the bots and their levels, the stage, the rules. -->
     <main id="botLobby" class="screen" hidden>
       <div class="panel narrow">
-        <h2>Bot match</h2>
-        <p class="hint">Set up the bots and watch them fight. ←/→ switch who the camera follows, Space for a free camera, ↑/↓ zoom.</p>
+        <h2 id="botTitle">Solo</h2>
+        <p id="botHint" class="hint"></p>
         <ol id="botList" class="players"></ol>
         <div class="row">
           <button id="botAdd" class="btn small">Add bot</button>
+          <label class="field small">Stage <select id="botStage"></select></label>
           <button id="botRulesBtn" class="btn small ghost">Rules</button>
         </div>
         <p id="botRules" class="muted"></p>
@@ -137,7 +216,7 @@
     <!-- Online: the room's rules, set before the room is created (and changeable from the lobby). -->
     <main id="roomRules" class="screen" hidden>
       <div class="panel narrow setup">
-        <h2>Room rules</h2>
+        <h2>Room rules</h2>
         <p class="eyebrow">Stage</p>
         <div class="rules">
           <label class="field small">Stage <select id="roomStage"></select></label>
@@ -160,7 +239,7 @@
             <label class="field small" title="Last round's winner wears the crown.">Crown <select id="roomCrown"><option value="show" selected>Just a hat</option><option value="bounty">Bounty: KO the champion to take it</option><option value="weight">Heavy: the champion takes more push</option></select></label>
             <label class="field small">Storm <select id="roomStorm"><option value="off">Off</option><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select></label>
           </div>
-        </details>
+        </details>
         <div class="row">
           <button id="roomRulesBack" class="btn ghost">Back</button>
           <button id="roomRulesGo" class="btn primary">Create room</button>
@@ -190,7 +269,7 @@
           <ul id="deviceList" class="bind-list"></ul>
           <p id="deviceProblem" class="status" role="status"></p>
         </section>
-        <section class="setup-step" data-step="3" hidden>
+        <section class="setup-step" data-step="3" hidden>
           <p class="eyebrow">Stage</p>
           <div class="rules">
             <label class="field small">Stage <select id="ruleStage"></select></label>
@@ -214,7 +293,7 @@
               <label class="field small" title="Last round's winner wears the crown.">Crown <select id="ruleCrown"><option value="show" selected>Just a hat</option><option value="bounty">Bounty: KO the champion to take it</option><option value="weight">Heavy: the champion takes more push</option></select></label>
               <label class="field small">Storm <select id="ruleStorm"><option value="off">Off</option><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select></label>
             </div>
-          </details>
+          </details>
         </section>
         <div class="row">
           <button id="setupBack" class="btn ghost">Back</button>
@@ -322,7 +401,7 @@
           <div id="trainInfo" class="art-info"></div>
         </section>
         <section class="menu-page" data-page="dummies" hidden>
-          <label class="field small">Stage <select id="dumStage"><option value="training">Training room</option><option value="mixed">Random stage</option></select></label>
+          <label class="field small">Stage <select id="dumStage"><option value="training">Training room</option></select></label>
           <label class="field small">How many <select id="dumCount"><option>1</option><option>2</option><option>3</option></select></label>
           <label class="field small">Behaviour <select id="dumLevel"><option value="dummy">Stand still</option><option value="easy">Easy</option><option value="normal">Normal</option><option value="hard">Hard</option></select></label>
           <label class="check"><input id="dumAttack" type="checkbox" /> They attack</label>
@@ -333,8 +412,9 @@
             <label class="check"><input id="dumGrenade" type="checkbox" /> Grenades</label>
           </div>
           <div class="checks" role="group" aria-label="Their health">
-            <label class="field small">Health <select id="dumHealth"><option value="normal">Normal</option><option value="set">Set (never changes)</option><option value="banded">Banded (back after 1 s)</option><option value="reset">Reset (once, then normal)</option></select></label>
+            <label class="field small">Health <select id="dumHealth"><option value="normal">Normal</option><option value="set">Set (never changes)</option><option value="banded">Banded (back after a while)</option><option value="reset">Reset (once, then normal)</option></select></label>
             <label class="field small">at <input id="dumHealthValue" type="number" min="0" max="300" step="10" value="0" />%</label>
+            <label class="field small">back after <input id="dumHealthAfter" type="number" min="0.5" max="10" step="0.5" value="2" /> s</label>
           </div>
           <p id="dumNote" class="muted"></p>
         </section>

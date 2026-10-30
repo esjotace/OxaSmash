@@ -24,16 +24,47 @@ const PIECES = {
   vase: [19, 0, 1, 1],
 };
 
+// The dungeon's thin wood (public/art/dungeon/wood.png, cut from the tileset by
+// tools/dungeon_wood.py): [x, y, width, height] in px. rotten: patchy boards about to give (the
+// crumbling floor); board: a clean board (ledges, drawbridges, lifts); brace: a ledge's support.
+const WOOD = { rotten: [0, 0, 96, 11], board: [0, 11, 48, 8], brace: [48, 11, 16, 16] };
+
 // Block looks the dungeon draws itself (the shared renderer skips them).
 export const DUNGEON_LOOKS = new Set(['stone', 'ledge', 'boxes']);
 
 export const isDungeon = (st) => st.theme === 'dungeon';
 
-function register(scene) {
+// (The tileset's named pieces; the night stages use its stone too.)
+export function register(scene) {
   const tex = scene.textures.get('dungeon');
   for (const [name, [c, r, w, h]] of Object.entries(PIECES)) {
     if (!tex.has(name)) tex.add(name, 0, c * TILE, r * TILE, w * TILE, h * TILE);
   }
+  if (!scene.textures.exists('dungeon-wood')) return;
+  const wood = scene.textures.get('dungeon-wood');
+  for (const [name, [x, y, w, h]] of Object.entries(WOOD)) if (!wood.has(name)) wood.add(name, 0, x, y, w, h);
+}
+
+// A run of wood w px long at (x, y): the piece repeated, the last one cut short; `from` px into
+// the piece to start at (to vary where a run begins). (Also the night stages' platforms.)
+export function woodRun(scene, name, x, y, w, from = 0) {
+  register(scene);
+  const [, , pw] = WOOD[name];
+  const out = [];
+  for (let at = 0, start = from % pw; at < w; ) {
+    const len = Math.min(pw - start, w - at);
+    const img = scene.add.image(x + at - start, y, 'dungeon-wood', name).setOrigin(0, 0);
+    img.setCrop(start, 0, len, WOOD[name][3]);
+    out.push(img);
+    at += len;
+    start = 0;
+  }
+  return out;
+}
+
+// A thin ledge: a board, a brace under each end (the one on the left mirrored).
+function ledgeBoards(scene, x, y, w) {
+  return [...woodRun(scene, 'board', x, y, w), scene.add.image(x, y + 6, 'dungeon-wood', 'brace').setOrigin(0, 0).setFlipX(true), scene.add.image(x + w - 16, y + 6, 'dungeon-wood', 'brace').setOrigin(0, 0)];
 }
 
 // A thin (drop-through) platform: a wooden plank, much thinner than the stone, with a bright top
@@ -45,6 +76,44 @@ export function plank(g, x, y, w) {
   g.fillStyle(0xd9a05e, 1).fillRect(x, y, w, 1);
   for (let sx = x + 16; sx < x + w - 1; sx += 16) g.fillStyle(0x2a1810, 1).fillRect(sx, y + 1, 1, 5);
   for (const bx of [x + 2, x + w - 5]) g.fillStyle(0x2a1810, 1).fillRect(bx, y + 7, 3, 4);
+  return g;
+}
+
+// A rotten plank: a thin platform that's about to give (the crumbling floor). The same wood as a
+// plank, but greyed and rotten: boards with gaps between them, cracks, a sagging middle board, a
+// broken-off corner, a few nails, and one bracket left hanging. `seed` varies the damage.
+export function rottenPlank(g, x, y, w, seed = 0) {
+  let s = (seed * 9301 + 49297) % 233280;
+  const rnd = () => (s = (s * 9301 + 49297) % 233280) / 233280;
+  // Boards of uneven width, a 1 px gap between them.
+  const boards = [];
+  for (let bx = x; bx < x + w; ) {
+    const bw = Math.min(x + w - bx, 6 + Math.floor(rnd() * 5));
+    boards.push([bx, bw]);
+    bx += bw + 1;
+  }
+  const sag = boards.length > 2 ? Math.floor(boards.length / 2) : -1;
+  boards.forEach(([bx, bw], k) => {
+    const dy = k === sag ? 1 : 0; // (the middle board sags)
+    g.fillStyle(0x24170f, 1).fillRect(bx, y + dy, bw, 6);
+    g.fillStyle(0x4d3828, 1).fillRect(bx, y + 1 + dy, bw, 4);
+    g.fillStyle(0x6b5038, 1).fillRect(bx, y + 2 + dy, bw, 1);
+    g.fillStyle(0xa58a66, 1).fillRect(bx, y + dy, bw, 1);
+    // A crack, now and then: a dark nick running down the board.
+    if (rnd() < 0.6) {
+      const cx = bx + 1 + Math.floor(rnd() * Math.max(1, bw - 2));
+      g.fillStyle(0x1a100a, 1).fillRect(cx, y + 1 + dy, 1, 2).fillRect(cx + (rnd() < 0.5 ? -1 : 1), y + 3 + dy, 1, 2);
+    }
+    // A nail at one end.
+    if (rnd() < 0.5) g.fillStyle(0xb8b8c4, 1).fillRect(bx + (rnd() < 0.5 ? 1 : bw - 2), y + 2 + dy, 1, 1);
+  });
+  // A corner broken off one end, in steps.
+  const end = rnd() < 0.5 ? x : x + w - 3;
+  g.fillStyle(0x24170f, 1).fillRect(end, y + 4, 3, 1);
+  g.fillStyle(0x0e0a08, 1).fillRect(end + (end === x ? 0 : 1), y + 5, 2, 1);
+  // Brackets: one holding, one dangling loose.
+  g.fillStyle(0x24170f, 1).fillRect(x + 2, y + 6, 3, 3);
+  g.fillStyle(0x24170f, 1).fillRect(x + w - 6, y + 6, 1, 4).fillRect(x + w - 5, y + 9, 2, 1);
   return g;
 }
 
@@ -109,8 +178,9 @@ export function buildDungeon(scene, st) {
     const cols = b.w / TILE;
     const rows = b.h / TILE;
     if (b.look === 'ledge') {
-      planks ??= scene.add.graphics();
-      plank(planks, b.x, b.y, b.w);
+      // (Thin: wood. The tileset's own boards, or drawn planks without them.)
+      if (scene.textures.exists('dungeon-wood')) out.push(...ledgeBoards(scene, b.x, b.y, b.w));
+      else plank((planks ??= scene.add.graphics()), b.x, b.y, b.w);
       continue;
     }
     // Solid stone. One tile thick, it's all chunky block, so it doesn't look like a thin ledge.
@@ -161,11 +231,13 @@ export function buildMovers(scene, st) {
     const cols = def.w / TILE;
     for (let c = 0; c < cols; c++) {
       const x = c * TILE;
+      const wood = scene.textures.exists('dungeon-wood');
       if (def.kind === 'bridge' || def.kind === 'lift') {
-        if (c === 0) box.add(plank(scene.add.graphics(), 0, 0, def.w));
+        if (c === 0) box.add(wood ? woodRun(scene, 'board', 0, 0, def.w) : plank(scene.add.graphics(), 0, 0, def.w));
       }
       else if (def.kind === 'crumble') {
-        box.add(piece(scene, 'stoneTop', x, 0));
+        // (Thin, so wood: rotten boards, about to give; each tile a different stretch of them.)
+        if (c === 0) box.add(wood ? woodRun(scene, 'rotten', 0, 0, def.w, (Math.round(def.x) * 7) % 96) : rottenPlank(scene.add.graphics(), 0, 0, def.w, Math.round(def.x)));
         if (def.glue && c === cols - 1) box.add(glueCoat(scene.add.graphics(), 0, 0, def.w));
       }
       // The crusher: a stone block with spikes underneath.

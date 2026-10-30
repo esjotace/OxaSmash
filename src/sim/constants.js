@@ -19,6 +19,8 @@ export const FIGHTER = {
   // Crouching right next to low cover tucks you lower still, fully behind it (only beside cover,
   // so a far-off box can't be used to dodge).
   tuckH: 11,
+  // Turned into a cat or an animal (see CAT, ANIMALS): as small as the art.
+  morphH: 12,
   tuckReach: 8, // how close (px) your side must be to the cover
   runSpeed: 140,
   groundAccel: 1400,
@@ -81,6 +83,8 @@ export const GUNS = {
   // (knockbackShare); fewer just add damage. Its spread is always the standing one (steadySpread),
   // so crouching doesn't tighten it into a rifle.
   shotgun: gun({ name: 'Shotgun', weight: 'heavy', knockbackShare: 0.5, steadySpread: true, magazineSize: 6, magazines: 2, reloadTime: 1.6, fireInterval: 0.7, pellets: 7, spreadDegrees: 14, bulletSpeed: 800, bulletRange: 220, damage: 2.2, knockback: 220, knockbackGrowth: 1.2, recoil: 260 }),
+  // One round, no spares: whoever it hits falls asleep (see SLEEP); it barely hurts.
+  snoozer: gun({ noCover: true, name: 'The Snoozer', weight: 'special', magazineSize: 1, magazines: 1, reloadTime: 2, fireInterval: 1.1, spreadDegrees: 0, bulletSpeed: 1800, bulletRange: 1400, damage: 4, knockback: 0, knockbackGrowth: 0, recoil: 160, sleep: true }),
   sniper: gun({ noCover: true, name: 'Sniper', weight: 'special', magazineSize: 4, magazines: 2, reloadTime: 2, fireInterval: 1.1, spreadDegrees: 0, bulletSpeed: 1800, bulletRange: 1400, damage: 20, knockback: 260, knockbackGrowth: 2.5, recoil: 160 }),
   rocket: gun({ noCover: true, name: 'Rocket Launcher', weight: 'special', magazineSize: 1, magazines: 2, reloadTime: 1.8, fireInterval: 1, spreadDegrees: 0, bulletSpeed: 420, bulletRange: 900, damage: 0, recoil: 200, explode: { radius: 72, damage: 14, knockback: 360, knockbackGrowth: 4 } }),
   blaster: gun({ name: 'Star Blaster', weight: 'heavy', magazineSize: 10, magazines: 2, reloadTime: 1.5, fireInterval: 0.35, spreadDegrees: 1, bulletSpeed: 520, bulletRange: 900, damage: 6, knockback: 200, knockbackGrowth: 2, bounces: 2, bounceGrowth: 2 }),
@@ -177,6 +181,12 @@ export const GRENADES = {
   smoke: { name: 'Smoke', fuse: 1.6, cloud: { radius: 80, time: 9 } },
   // A cloud like smoke, thinner, that slowly hurts anyone inside.
   poison: { name: 'Poison', fuse: 1.6, cloud: { radius: 70, time: 8, perSecond: 3 } },
+  // A light pink gas: whoever walks into it goes drowsy (see DROWSY). It doesn't hurt.
+  drowsy: { name: 'Drowsy Gas', fuse: 1.6, cloud: { radius: 70, time: 6, perSecond: 0, drowsy: true } },
+  // A thrown potion: everyone within `radius` (the thrower too) turns into a random animal (see
+  // ANIMALS) for up to `time` s: they can walk and jump, nothing else. Any damage, any status or
+  // a KO turns them back.
+  polymorph: { name: 'Polymorph Potion', fuse: 1.4, polymorph: { radius: 64, time: 3 } },
   // Teleports you to where it goes off; if it hits someone first, you swap places with them.
   warp: { name: 'Warp', fuse: 1.4, warp: true },
   // Sticks to whatever it touches first (a wall, the floor, a person). Press the grenade button
@@ -213,7 +223,7 @@ export const STRIKE = {
 // Melee weapons, found as pickups (press pick up while touching one). A swing sweeps the hit
 // area along an arc of `arc` degrees each side of the aim, from `startup` to `startup + active`.
 // Light weapons never launch: their push is capped at LIGHT_MAX_PUSH. Heavy ones launch.
-// Quirks: backstab (from behind: damage × damageMul, and a push even from a light weapon), uppercut (launches straight up), homerun
+// Quirks: backstab (from behind: damage × damageMul, and a push even from a light weapon), uppercut (launches straight up), flat
 // (launches flat and far), unblockable (goes through blocks). rising: the swing goes from below
 // to above (the rest go from above to below). thrust: a straight jab along the aim instead of a
 // swing (no arc): drawn back in the wind-up, then shot out `travel` px to `reach` while it hits
@@ -294,14 +304,14 @@ export const MELEE = {
     uppercut: true,
     rising: true,
   },
-  // A tap is a light poke. Hold to wind up: the longer, the harder it launches (and the slower you
-  // walk: `power.slow` of your speed when full). Most of the way there it's the old home run; full,
-  // a bit more, at 45°, with a crack.
-  bat: {
-    name: 'Bone Club', weight: 'heavy', hitSound: 'blunt',
+  // A caveman's club. A tap is a light poke. Hold to wind up: the longer, the harder it launches
+  // (and the slower you walk: `power.slow` of your speed when full). Most of the way there it
+  // launches flat; full, a bit more, at 45°, with a crack.
+  club: {
+    name: 'Oooga Booga', weight: 'heavy', hitSound: 'blunt',
     damage: 5, knockback: 120, knockbackGrowth: 1,
     reach: 17, radius: 11, arc: 80, startup: 0.14, active: 0.1, recovery: 0.3, lunge: 50,
-    homerun: true,
+    flat: true,
     power: { time: 1.2, graded: true, slow: 0.1, damage: 9, knockback: 300, knockbackGrowth: 5, full: { damage: 11, knockback: 340, knockbackGrowth: 5.8 } },
     heavy: { damage: 7, knockback: 200, knockbackGrowth: 3 },
   },
@@ -531,7 +541,16 @@ export const ITEMS = {
   mirror: { name: 'Mirror Rune', rune: { time: 15, reflect: 50 } },
   lamp: { name: 'Genie Lamp', wish: { rub: 1.5 } },
   crystal: { name: 'Crystal Ball', homing: { time: 8, turn: 7, damage: 0.5 } },
+  catring: { name: 'Ring of Cat', ring: true },
 };
+// The Ring of Cat: takes both grenade slots (a grenade picked up replaces it). `uses` times, the
+// grenade button turns you into one of `kinds` cats; pressing it again turns you back. A cat runs `speed` × as
+// fast, jumps and dashes, and can't attack, block, hide or pick things up. It turns back on any
+// attack (which still comes out), `breakAt` % of damage taken as a cat, any status but drowsiness
+// and sleep (the cat lies down, then sleeps), or a KO.
+export const CAT = { uses: 7, kinds: 6, speed: 2, breakAt: 10 };
+// The polymorph potion's animals (see tools/critter_art.py for their art).
+export const ANIMALS = ['snake', 'cobra', 'hamster', 'rat', 'pigeon', 'seagull', 'bear', 'blackbear', 'badger', 'wolf', 'fox', 'shiba', 'blackdog'];
 export const CARRY = { dropPush: 260, reach: 14 };
 // The banner's melee-only zone: the stage section it's planted in (random stages), or `width` px
 // around it. Shots and thrown things (not thrown melee weapons) vanish entering it, and guns don't
@@ -632,7 +651,8 @@ export const MOVERS = {
 // so a full bar is two dashes. A quick shove in the direction you hold (backwards if you hold
 // nothing). For the first `iframes` s you can't be hit
 // by bullets, melee or explosions (spikes, crushers and the storm still get you).
-export const DASH = { speed: 380, time: 0.2, iframes: 0.14, recharge: 2.5, cost: 0.5 };
+// di: holding up or down tilts the dash by this many degrees (on the ground, only up).
+export const DASH = { speed: 380, time: 0.2, iframes: 0.14, recharge: 2.5, cost: 0.5, di: 45 };
 
 // Combos. A melee hit that lands lets you cut the rest of that swing short with a jump or a dash
 // (cancel), gives back your air jump, and makes your next dash free (within `freeDash` s); a swing
@@ -648,6 +668,16 @@ export const COMBO = { recoveryOnHit: 0.5, freeDash: 1.5, stale: 0.15, staleMin:
 // (then you slip past), or dash (dashes go straight through). Two people standing in each other
 // (landing on someone) drift apart at `settle` px/s. Not while hidden or knocked flying.
 export const BUMP = { passAfter: 0.4, settle: 120 };
+// Asleep (hit by The Snoozer, or drowsy too long): lying there for `time` s, no control at all,
+// but mashing moves fills a meter the way shaking off drowsiness does (see DROWSY): full, you
+// wake up, though not before `min` s. Any hit wakes you (and lands in full: a sleeper is a free
+// shot). Once awake you can't go drowsy again for `rested` s.
+export const SLEEP = { time: 3, min: 2, rested: 2 };
+// Drowsy (the drowsy gas): `slow` slower, and after `time` s you fall asleep, unless you take
+// damage first (that wakes you up) or shake it off, filling a meter with jerky moves: each turn
+// (pressing a new direction), jump, dash or tap down adds its `shake` share, but the same move
+// again in a row adds `shake.repeat` × what it added last time (walking straight adds nothing).
+export const DROWSY = { time: 3, slow: 0.3, shake: { turn: 0.06, jump: 0.07, dash: 0.1, drop: 0.05, repeat: 0.5 } };
 // DI: when you're launched, the direction you hold (left/right; crouch for down, up for up)
 // bends your flight by up to `degrees`, the most when it's at right angles to the launch. Only for
 // real launches (push of at least `minPower`).

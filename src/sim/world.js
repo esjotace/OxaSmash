@@ -1,6 +1,6 @@
 // The match rules, ported from the Godot build: movement, the 9mm (two magazines, auto-reload,
 // throw when empty), melee, cover, barrels, spike walls, the storm, lives. Plain JS, fixed ticks.
-import { KO_CREDIT, CASH, LOOT, STYLE, COMBO, BUMP, COVER, DI, BREAKER, AMMO_CHEST, SLIME, FOOTHOLD, ITEMS, CARRY, HAVEN, LEGENDARY, WISH, CROWN, RADIATION, DT, FIGHTER as F, GRAVITY, JUMP_SPEED, AIR_JUMP_SPEED, GUNS, GUN_THROW, HOLD, ACCURACY, HEADSHOT, BLAST, GRENADE, GRENADES, DASH, GLUE, STAMINA, SWING_HAND, STRIKE, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, PICKUPS, BLOCK, DOOR, BARREL, SPIKES, STORM, RULES, TILE, MOVERS, ICE } from './constants.js';
+import { CAT, ANIMALS, SLEEP, DROWSY, KO_CREDIT, CASH, LOOT, STYLE, COMBO, BUMP, COVER, DI, BREAKER, AMMO_CHEST, SLIME, FOOTHOLD, ITEMS, CARRY, HAVEN, LEGENDARY, WISH, CROWN, RADIATION, DT, FIGHTER as F, GRAVITY, JUMP_SPEED, AIR_JUMP_SPEED, GUNS, GUN_THROW, HOLD, ACCURACY, HEADSHOT, BLAST, GRENADE, GRENADES, DASH, GLUE, STAMINA, SWING_HAND, STRIKE, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, PICKUPS, BLOCK, DOOR, BARREL, SPIKES, STORM, RULES, TILE, MOVERS, ICE } from './constants.js';
 import { getStage, DEFAULT_STAGE } from './stage.js';
 import { NEUTRAL } from './input.js';
 
@@ -137,6 +137,18 @@ function createFighter(id, spawn, stocks, armed = true, startGrenades = 0) {
     burn: 0, // seconds left on fire
     burnBy: -1,
     slip: 0, // seconds left slipping as if on ice (slapped with the fish)
+    sleep: 0, // seconds left asleep (see SLEEP)
+    drowsy: 0, // seconds left drowsy before falling asleep (see DROWSY)
+    shake: 0, // how far a drowsy fighter has shaken it off (0..1)
+    shakeLast: null, // the last move that shook it (see DROWSY), how many times in a row, and the
+    shakeRun: 0, //   direction held last tick
+    shakeHeld: 0,
+    rested: 0, // seconds left that the drowsy gas can't get you (just woke up)
+    ring: 0, // uses left on the Ring of Cat (see CAT)
+    cat: 0, // which cat you are (1..CAT.kinds), or 0
+    catHurt: 0, // damage taken as a cat
+    animal: -1, // which animal you've been turned into (an index into ANIMALS), or -1
+    animalT: 0, // seconds left as one
     haste: 0, // seconds left running faster (ate a carrot)
     carry: null, // an item held up (the key)
     carryT: 0,
@@ -318,7 +330,9 @@ export function removeFighter(world, id) {
 export const center = (f) => ({ x: f.x, y: f.y - F.h / 2 });
 const low = (f) => f.crouching || f.blocking === 'crouch';
 export const aimOrigin = (f) => ({ x: f.x, y: f.y - (low(f) ? (f.tucked ? 8 : 14) : 22) });
-export const bodyHeight = (f) => (low(f) ? (f.tucked ? F.tuckH : F.crouchH) : F.h);
+// (A view's fighter has the animal's name instead of its index, and null for none.)
+export const morphed = (f) => f.cat > 0 || (f.animal ?? -1) !== -1;
+export const bodyHeight = (f) => (morphed(f) ? F.morphH : low(f) ? (f.tucked ? F.tuckH : F.crouchH) : F.h);
 // Where the gun is held: chest, waist or shoulder by its weight (see HOLD), lower when crouched.
 // Tucked behind cover, the gun is held up over it (a big gun can't be; see COVER).
 export const gunOrigin = (f) => ({ x: f.x, y: f.tucked && !GUNS[f.gun]?.noCover ? f.y - TILE - COVER.gunOver : f.y - bodyHeight(f) * HOLD[GUNS[f.gun]?.holdAt ?? GUNS[f.gun]?.weight ?? 'light'] });
@@ -432,6 +446,14 @@ function updateFighter(world, st, f, input, canAct) {
   f.muzzle = Math.max(0, f.muzzle - DT);
   f.slip = Math.max(0, f.slip - DT);
   f.haste = Math.max(0, f.haste - DT);
+  f.rested = Math.max(0, f.rested - DT);
+  if (f.sleep > 0) {
+    // Asleep: mashing moves wakes you early (see SLEEP).
+    if (canAct) shakeMoves(f, input, press);
+    if ((f.sleep -= DT) <= 0 || (f.shake >= 1 && SLEEP.time - f.sleep >= SLEEP.min)) wake(world, f);
+  }
+  if (morphed(f)) morphTick(world, f);
+  if (f.drowsy > 0) drowsyTick(world, f, canAct && f.hitstun <= 0 ? input : NEUTRAL, canAct && f.hitstun <= 0 ? press : {});
   if (f.drop > 0) f.drop -= DT;
   if (f.hitstun <= 0) f.stunned = false;
   if (f.blockDrop >= 0) {
@@ -462,7 +484,7 @@ function updateFighter(world, st, f, input, canAct) {
     hit(world, f, 0, pl.dx, pl.dy, pl.base, pl.growth, pl.by);
     world.events.push({ type: 'launch', id: f.id, x: f.x, y: f.y - F.h / 2 });
   }
-  const control = canAct && f.hitstun <= 0;
+  const control = canAct && f.hitstun <= 0 && f.sleep <= 0;
   const p = control ? press : {};
   const inp = control ? input : NEUTRAL;
 
@@ -475,23 +497,46 @@ function updateFighter(world, st, f, input, canAct) {
     }
     f.hidden = -1;
     world.events.push({ type: 'unhide', id: f.id, x: f.x, y: f.y });
-  } else if (control && p.hp && !inp.crouch) {
+  } else if (control && p.hp && !inp.crouch && !morphed(f)) {
     hide(world, st, f);
   }
-  if (control && p.ep) pickUp(world, f);
+  let ip = inp;
+  let pp = p;
+  if (f.animal >= 0) {
+    // An animal: walks and jumps (and drops through thin floors), nothing else.
+    ip = { ...NEUTRAL, mx: inp.mx, jump: inp.jump, down: inp.down, ax: inp.ax, ay: inp.ay };
+    pp = { jp: p.jp, dp: p.dp };
+  } else if (f.cat) {
+    if (p.gp) {
+      // The grenade button (the ring's): back to yourself.
+      unmorph(world, f);
+      pp = { ...p, gp: false };
+    } else if (p.sp || p.mp || p.kp) unmorph(world, f); // (an attack: back to yourself, and it comes out)
+    else {
+      // A cat runs, jumps and dashes (and drops through thin floors).
+      ip = { ...inp, shoot: false, meleeHeld: false, grenadeHeld: false, block: false, crouch: false };
+      pp = { jp: p.jp, dp: p.dp, xp: p.xp };
+    }
+  }
+  if (control && pp.ep) pickUp(world, f);
+  // The Ring of Cat (in the grenade slots): the grenade button turns you into a cat.
+  if (control && pp.gp && f.ring > 0 && !morphed(f) && !f.grenades.length && f.cook < 0) {
+    becomeCat(world, f);
+    pp = { ...pp, gp: false };
+  }
   // (The trigger catches a returning gun too, instead of firing.)
-  if (control && p.sp && catchGun(world, f)) p.sp = false;
+  if (control && pp.sp && catchGun(world, f)) pp.sp = false;
   // Cycle grenades: the next one to throw goes to the back.
-  if (control && p.cp && f.grenades.length > 1) {
+  if (control && pp.cp && f.grenades.length > 1) {
     f.grenades.push(f.grenades.shift());
     world.events.push({ type: 'swap', id: f.id, x: f.x, y: f.y - F.h });
   }
   if (f.active === 'gun' && !f.hasGun && !f.blade) f.active = 'melee';
 
-  move(world, f, inp, p, control);
-  useGun(world, f, inp, p);
-  useMelee(world, f, inp, p);
-  useGrenade(world, f, inp, p, control);
+  move(world, f, ip, pp, control);
+  useGun(world, f, ip, pp);
+  useMelee(world, f, ip, pp);
+  useGrenade(world, f, ip, pp, control);
 
   const preVx = f.vx;
   const preVy = f.vy;
@@ -545,11 +590,16 @@ function move(world, f, input, press, control) {
   f.buffer = press.jp ? F.jumpBuffer : Math.max(0, f.buffer - DT);
 
   // Dash: the dodge button, paid for from the stamina bar (half of it). A shove the way you hold (backwards if you
-  // hold nothing), untouchable at the start.
+  // hold nothing), untouchable at the start. DI: holding up or down tilts it by `DASH.di` degrees
+  // (on the ground, only up: a hop; down there is crouching).
   if (control && press.xp && (f.stamina >= DASH.cost || f.freeDash > 0) && f.dash <= 0 && f.swing < 0 && !f.chain && !glued) {
     const dir = Math.sign(input.mx) || -f.facing;
-    f.vx = dir * DASH.speed;
-    if (!f.grounded) f.vy = Math.min(f.vy, 0) * 0.3;
+    const tilt = f.heldY < 0 || (f.heldY > 0 && !f.grounded) ? (f.heldY * DASH.di * Math.PI) / 180 : 0;
+    f.vx = dir * DASH.speed * Math.cos(tilt);
+    if (tilt) {
+      f.vy = DASH.speed * Math.sin(tilt);
+      if (f.vy < 0) f.grounded = false;
+    } else if (!f.grounded) f.vy = Math.min(f.vy, 0) * 0.3;
     // (A free dash, earned by landing a hit, costs no stamina.)
     Object.assign(f, { dash: DASH.time, dodge: DASH.iframes, stamina: f.freeDash > 0 ? f.stamina : f.stamina - DASH.cost, freeDash: 0 });
     world.events.push({ type: 'dodge', id: f.id, x: f.x, y: f.y, dir });
@@ -638,9 +688,11 @@ function speedOf(world, f, glued) {
   const m = f.melee ? MELEE[f.melee] : null;
   let k = f.hasGun && f.fireCd > 0 ? GUNS[f.gun].slowWhileFiring ?? 1 : 1;
   if (glued) k *= GLUE.slow;
+  if (f.drowsy > 0) k *= 1 - DROWSY.slow;
+  if (f.cat) k *= CAT.speed;
   if (m?.carrySlow) k *= m.carrySlow;
   if (m?.spin && f.holding >= m.spin.after) k *= m.spin.slow;
-  // (Winding up the bat: slower and slower, down to `power.slow` when it's full.)
+  // (Winding up the club: slower and slower, down to `power.slow` when it's full.)
   if (m?.power?.slow && f.holding >= 0) k *= 1 - (1 - m.power.slow) * Math.min(1, f.holding / m.power.time);
   if (f.haste > 0) k *= MELEE.carrot.eat.speed;
   if (f.rune) k *= ITEMS[f.rune].rune.speed ?? 1;
@@ -878,7 +930,7 @@ function fire(world, f, g, power = 1) {
     world.bullets.push({
       id: world.nextBullet++, owner: f.id, gun: f.gun, x: sx, y: sy, x0: sx, y0: sy, born: world.tick, vx: dx * speed, vy: dy * speed - (g.lift ?? 0), gravity: g.gravity ?? 0, life: g.bulletRange / speed, thrown: false,
       damage, kb, growth, light, explode: g.explode ?? null, bounces: g.bounces ?? 0, grow: g.bounceGrowth ?? 0, size: 1, look, volley,
-      pierce: g.pierce ? [] : null, burn: g.burn ?? 0, stick: !!g.stick, hops: g.hops ?? 0, spore: g.spore ?? null, jackpot: g.jackpot ?? null, homing: f.homing > 0,
+      pierce: g.pierce ? [] : null, sleep: !!g.sleep, burn: g.burn ?? 0, stick: !!g.stick, hops: g.hops ?? 0, spore: g.spore ?? null, jackpot: g.jackpot ?? null, homing: f.homing > 0,
     });
   }
 }
@@ -1181,7 +1233,7 @@ function updateLoot(world, st) {
 
 // The ammo chests: one on each of the stage's outermost spawn points.
 function placeAmmoChests(st) {
-  if (!st.spawns?.length) return [];
+  if (!st.spawns?.length || st.bare) return []; // (a bare stage: nothing on it)
   const sorted = [...st.spawns].sort((a, b) => a.x - b.x);
   const ends = sorted.length > 1 ? [sorted[0], sorted[sorted.length - 1]] : [sorted[0]];
   return ends.map((p) => ({ x: p.x, y: p.y, cd: 0 }));
@@ -1282,6 +1334,13 @@ function shotHits(world, v, b, dx, dy) {
   }
   const damage = b.damage * (head ? HEADSHOT.damageMul : 1);
   using(b.gun ?? b.kind ?? null);
+  if (b.sleep) {
+    // The Snoozer: a scratch, then sleep (not if it was dodged).
+    const lands = v.state === 'ok' && v.invincible <= 0 && v.dodge <= 0;
+    chip(world, v, damage, b.owner);
+    if (lands) fallAsleep(world, v);
+    return;
+  }
   if (b.light && !head) return chip(world, v, damage, b.owner);
   if (b.volley) {
     // A shotgun pellet: only the hit that takes this shot past half its pellets pushes and stuns.
@@ -1322,7 +1381,10 @@ function chip(world, v, amount, by, quiet = false) {
   if (v.state !== 'ok' || v.invincible > 0 || (v.dodge > 0 && !quiet)) return;
   v.damage = Math.min(999, v.damage + amount);
   if (by >= 0 && by !== v.id) v.lastHitBy = by;
-  if (quiet) return; // (burning, bleeding, poison: not what knocks anyone out)
+  if (v.drowsy > 0) clearDrowsy(world, v);
+  morphHurt(world, v, amount);
+  if (quiet) return; // (burning, bleeding, poison: not what knocks anyone out, nor wakes anyone)
+  if (v.sleep > 0) wake(world, v);
   Object.assign(v, { lastHitWith: cause, lastHitAt: world.tick });
   v.flash = 0.08;
   world.events.push({ type: 'hit', id: v.id, by, x: v.x, y: v.y - F.h / 2, power: 0, damage: amount });
@@ -1402,7 +1464,7 @@ function useMelee(world, f, input, press) {
   if (press.mp) startSwing(world, f, m, f.melee);
 }
 
-// How charged a held swing is (0: a tap). A graded wind-up (the bat) grows with the hold, up to
+// How charged a held swing is (0: a tap). A graded wind-up (the club) grows with the hold, up to
 // 1; the others are either full (held long enough) or a tap.
 export function powerOf(m, heldFor) {
   if (!m.power) return 0;
@@ -1741,14 +1803,14 @@ function meleeHits(world, f, m) {
       }
       continue;
     }
-    // Quirks: from behind (backstab), straight up (uppercut), flat (homerun).
+    // Quirks: from behind (backstab), straight up (uppercut), flat and far (flat).
     // (From behind: the swing travels the way they face, like the front check above.)
     const behind = dir !== 0 && dir === v.facing;
     const damage = c.damage * (m.backstab && behind ? m.backstab.damageMul : 1);
     let [dx, dy] = [kx, ky];
     if (m.uppercut) [dx, dy] = [Math.sign(f.swingX) * 0.15, -1];
     else if (c.critical) [dx, dy] = [Math.sign(f.swingX) || f.facing, -1]; // 45°
-    else if (m.homerun) [dx, dy] = [Math.sign(f.swingX) || f.facing, -0.25];
+    else if (m.flat) [dx, dy] = [Math.sign(f.swingX) || f.facing, -0.25];
     // Light weapons' finishers launch: the nodachi's charged slash, the machete's last combo hit.
     let launch = f.swingCharged && m.charge ? m.charge.launch : m.backstab && behind ? m.backstab : null;
     if (m.combo && !f.swingHit.includes('combo')) {
@@ -1947,6 +2009,7 @@ function pickUp(world, f) {
     giveGun(f, p.weapon, p.ammo);
     f.active = 'gun';
   } else if (GRENADES[p.weapon]) {
+    f.ring = 0; // (a grenade takes the ring's place)
     if (f.grenades.length >= GRENADE.max) f.grenades[0] = p.weapon;
     else f.grenades.push(p.weapon);
   } else if (MELEE[p.weapon].replacesGun) {
@@ -1980,6 +2043,10 @@ function useItem(world, f, key) {
     f.wish = it.wish.rub;
   } else if (it.homing) {
     f.homing = it.homing.time;
+  } else if (it.ring) {
+    // Both grenade slots.
+    f.ring = CAT.uses;
+    f.grenades = [];
   }
   world.events.push({ type: 'item', id: f.id, x: f.x, y: f.y - 24, item: key });
 }
@@ -2116,25 +2183,25 @@ function openChest(world, f) {
 }
 
 // Training dummies' health rule: 'set' (never changes), 'banded' (takes hits, then goes back to
-// the set value a second after the last one).
+// the set value `after` s after the last one).
 function holdHealth(f) {
   const h = f.healthRule;
   if (!h) return;
   if (h.mode === 'set') f.damage = h.value;
   else if (h.mode === 'banded') {
-    if (f.damage !== h.value && f.damage !== f.bandLast) f.bandT = 1;
+    if (f.damage !== h.value && f.damage !== f.bandLast) f.bandT = h.after ?? 2;
     f.bandLast = f.damage;
     if (f.bandT > 0 && (f.bandT -= DT) <= 0) f.damage = h.value;
   }
 }
 
-// Training: a dummy's health rule ({ mode: 'set' | 'banded' | 'reset', value }). Reset just puts
+// Training: a dummy's health rule ({ mode: 'set' | 'banded' | 'reset', value, after }). Reset just puts
 // its damage back to the value once.
 function setHealthRule(world, id, rule) {
   const f = world.fighters[id];
   if (!f) return;
   f.damage = rule.value;
-  f.healthRule = rule.mode === 'set' || rule.mode === 'banded' ? { mode: rule.mode, value: rule.value } : null;
+  f.healthRule = rule.mode === 'set' || rule.mode === 'banded' ? { mode: rule.mode, value: rule.value, after: rule.after ?? 2 } : null;
   Object.assign(f, { bandT: 0, bandLast: rule.value });
 }
 
@@ -2153,6 +2220,9 @@ function hit(world, v, amount, dx, dy, base, growth, by, maxPower = Infinity, un
     return false;
   }
   v.damage = Math.min(999, v.damage + amount);
+  if (v.sleep > 0) wake(world, v);
+  if (v.drowsy > 0) clearDrowsy(world, v);
+  morphHurt(world, v, amount);
   // (The iron rune, a jinx and the crown's weight change how hard you're pushed.)
   const power = Math.min(maxPower, (base + growth * v.damage) * pushTaken(world, v));
   if (v.carry && power > CARRY.dropPush) dropCarry(world, v);
@@ -2241,7 +2311,7 @@ function respawn(world, st, f) {
   const p = respawnPoint(world, st);
   Object.assign(f, { state: 'ok', hidden: -1, pendingLaunch: null, x: p.x, y: p.y, vx: 0, vy: 0, damage: 0, invincible: F.respawnInvincible, lastHitBy: -1, lastHitWith: null, lastHitAt: -1, lastPlayerHitAt: -1, jumpsLeft: F.airJumps, drop: 0, grounded: false, fastFall: false, cutting: false });
   rearm(f);
-  Object.assign(f, { burn: 0, bleed: 0, slip: 0, haste: 0, rune: null, runeT: 0, reflects: 0, wish: -1, jinx: 0, homing: 0, carryT: 0 });
+  Object.assign(f, { burn: 0, bleed: 0, slip: 0, haste: 0, sleep: 0, drowsy: 0, shake: 0, rested: 0, cat: 0, catHurt: 0, animal: -1, animalT: 0, rune: null, runeT: 0, reflects: 0, wish: -1, jinx: 0, homing: 0, carryT: 0 });
 }
 
 function checkGameOver(world) {
@@ -2469,6 +2539,15 @@ function detonate(world, st, g) {
   } else if (k.cloud) {
     world.clouds.push({ id: world.nextCloud++, kind: g.kind, x: at.x, y: at.y, r: k.cloud.radius, t: k.cloud.time, by: g.owner });
     world.events.push({ type: 'cloud', kind: g.kind, x: at.x, y: at.y });
+  } else if (k.polymorph) {
+    world.events.push({ type: 'poof', x: at.x, y: at.y, r: k.polymorph.radius });
+    for (const f of world.fighters) {
+      if (f.state !== 'ok' || f.invincible > 0 || f.dodge > 0) continue;
+      if (Math.hypot(center(f).x - at.x, center(f).y - at.y) > k.polymorph.radius) continue;
+      if (f.cat) unmorph(world, f);
+      Object.assign(f, { animal: Math.floor(world.rng() * ANIMALS.length), animalT: k.polymorph.time, swing: -1, blocking: null, holding: -1, hidden: -1 });
+      world.events.push({ type: 'morph', id: f.id, x: f.x, y: f.y - F.crouchH / 2, animal: ANIMALS[f.animal] });
+    }
   } else if (k.warp) {
     const f = world.fighters[g.owner];
     if (f.state !== 'ok' || f.hidden >= 0) return;
@@ -2494,9 +2573,84 @@ function updateAilments(world) {
   world.clouds = world.clouds.filter((c) => {
     c.t -= DT;
     const per = c.perSecond ?? GRENADES[c.kind].cloud.perSecond;
+    if (GRENADES[c.kind]?.cloud?.drowsy) {
+      for (const f of world.fighters) {
+        if (f.state !== 'ok' || f.drowsy > 0 || f.sleep > 0 || f.rested > 0 || f.invincible > 0) continue;
+        if (Math.hypot(center(f).x - c.x, center(f).y - c.y) >= c.r) continue;
+        Object.assign(f, { drowsy: DROWSY.time, shake: 0, shakeLast: null, shakeRun: 0, shakeHeld: 0 });
+        world.events.push({ type: 'drowsy', id: f.id, x: f.x, y: f.y - F.h });
+      }
+    }
     if (per) for (const f of world.fighters) if (f.state === 'ok' && Math.hypot(center(f).x - c.x, center(f).y - c.y) < c.r) chip(world, f, per * DT, c.by, true);
     return c.t > 0;
   });
+}
+
+// The Ring of Cat and the polymorph potion (see CAT, ANIMALS).
+function becomeCat(world, f) {
+  if (f.cat || f.animal >= 0) return;
+  f.ring--;
+  Object.assign(f, { cat: 1 + Math.floor(world.rng() * CAT.kinds), catHurt: 0, swing: -1, blocking: null, holding: -1 });
+  world.events.push({ type: 'morph', id: f.id, x: f.x, y: f.y - F.crouchH / 2, cat: f.cat });
+}
+
+function unmorph(world, f) {
+  Object.assign(f, { cat: 0, catHurt: 0, animal: -1, animalT: 0 });
+  world.events.push({ type: 'unmorph', id: f.id, x: f.x, y: f.y - F.h / 2 });
+}
+
+// Any other status turns you back (a cat keeps through drowsiness and sleep); an animal also
+// turns back when its time is up.
+function morphTick(world, f) {
+  const status = f.burn > 0 || f.bleed > 0 || f.slip > 0 || f.jinx > 0 || f.stunned || !!f.pendingLaunch || (!f.cat && (f.drowsy > 0 || f.sleep > 0));
+  if (status || (f.animal >= 0 && (f.animalT -= DT) <= 0)) unmorph(world, f);
+}
+
+// Damage turns an animal back at once, a cat once it adds up to CAT.breakAt.
+function morphHurt(world, f, amount) {
+  if (!(amount > 0)) return;
+  if (f.animal >= 0) return unmorph(world, f);
+  if (f.cat && (f.catHurt += amount) >= CAT.breakAt) unmorph(world, f);
+}
+
+// Sleep and drowsiness (see SLEEP, DROWSY). Falling asleep drops whatever you were doing.
+function fallAsleep(world, f) {
+  Object.assign(f, { sleep: SLEEP.time, drowsy: 0, shake: 0, shakeLast: null, shakeRun: 0, shakeHeld: f.heldX, swing: -1, blocking: null, hidden: -1 });
+  world.events.push({ type: 'sleep', id: f.id, x: f.x, y: f.y - F.h });
+}
+
+function wake(world, f) {
+  Object.assign(f, { sleep: 0, rested: SLEEP.rested });
+  world.events.push({ type: 'wake', id: f.id, x: f.x, y: f.y - F.h });
+}
+
+function clearDrowsy(world, f) {
+  Object.assign(f, { drowsy: 0, shake: 0, rested: SLEEP.rested });
+  world.events.push({ type: 'shake', id: f.id, x: f.x, y: f.y - F.h });
+}
+
+// Jerky moves fill f.shake (see DROWSY): turns, jumps, dashes, taps down, each worth less when
+// it's the same one again in a row. Shakes off drowsiness; wakes you early from sleep.
+function shakeMoves(f, input, press) {
+  const s = DROWSY.shake;
+  const move = (kind, base) => {
+    f.shakeRun = kind === f.shakeLast ? f.shakeRun + 1 : 0;
+    f.shakeLast = kind;
+    f.shake += base * s.repeat ** f.shakeRun;
+  };
+  const dir = Math.sign(input.mx ?? 0);
+  if (dir && dir !== f.shakeHeld) move(dir > 0 ? 'right' : 'left', s.turn);
+  f.shakeHeld = dir;
+  if (press.jp) move('jump', s.jump);
+  if (press.xp) move('dash', s.dash);
+  if (press.dp) move('drop', s.drop);
+}
+
+// Drowsy: jerky moves shake it off; if the time runs out first, you fall asleep.
+function drowsyTick(world, f, input, press) {
+  shakeMoves(f, input, press);
+  if (f.shake >= 1) return clearDrowsy(world, f);
+  if ((f.drowsy -= DT) <= 0) fallAsleep(world, f);
 }
 
 // Is this point inside a smoke or poison cloud? (Bots can't see through them.)
@@ -2597,14 +2751,10 @@ function createStorm(st, cfg, rng) {
   const { left, right } = st.storm;
   let zone1;
   let zone2;
-  if (st.sections) {
-    const secs = st.sections;
-    const snap = (a, b) => [Math.max(left, a.left), Math.min(right, b.right)];
-    const final = secs.map((_, i) => i).filter((i) => secs[i].final);
-    const k = final[Math.floor(rng() * final.length)];
-    const j = clamp(k - Math.floor(rng() * 3), 0, secs.length - 3);
-    zone1 = snap(secs[j], secs[j + 2]);
-    zone2 = snap(secs[k], secs[k]);
+  if (st.arena) {
+    // (A random dungeon's arena: the storm closes on it, its slab the last ground.)
+    zone2 = [st.arena.left, st.arena.right];
+    zone1 = [Math.max(left, st.arena.left - 96 - 256), Math.min(right, st.arena.right + 96 + 256)];
   } else {
     const c2 = left + cfg.finalWidth / 2 + rng() * (right - left - cfg.finalWidth);
     const c1 = clamp(c2, left + cfg.firstWidth / 2, right - cfg.firstWidth / 2);

@@ -39,6 +39,7 @@ in pixels (a tile is 16).
 | **Assault Rifle** | light | 2.5 | none | 9.1 | yes | 24 × 2 | 1.5 | 2.5° | 750 | — |
 | **Minigun** | light | 1.4 | none | 20 | yes | 80 × 2 | 2.5 | 7° | 550 | you move at 45% speed while firing; thrown, it doesn't come back; too big to fire from behind cover |
 | **Shotgun** | heavy | 2.2 | 220 + 1.2×% | 1.4 | no | 6 × 2 | 1.6 | 14° | 220 | 7 pellets per shot; the same spread however you stand; pushes only when more than 50% of a shot's pellets hit the same person |
+| **The Snoozer** | special | 4 | none | 0.9 | no | 1 × 1 | 2 | 0° | 1400 | puts whoever it hits to sleep for 3 s (mashing moves wakes them after 2 s; any hit wakes them); no spare magazine; too big to fire from behind cover; special: the style meter doesn't reload it; ammo chests do |
 | **Sniper** | special | 20 | 260 + 2.5×% | 0.9 | no | 4 × 2 | 2 | 0° | 1400 | too big to fire from behind cover; special: the style meter doesn't reload it; ammo chests do |
 | **Rocket Launcher** | special | 0 | none | 1 | no | 1 × 2 | 1.8 | 0° | 900 | explodes: radius 72, 14 damage, push 360 + 4×%; too big to fire from behind cover; special: the style meter doesn't reload it; ammo chests do |
 | **Star Blaster** | heavy | 6 | 200 + 2×% | 2.9 | no | 10 × 2 | 1.5 | 1° | 900 | glances off walls 2×, each bounce ×2 speed, size, damage and push |
@@ -67,7 +68,7 @@ Each weapon has a **heavy** (the melee button: these numbers) and a **jab** (its
 | **Nodachi** | light | 9 | 210 + 2.6×% | 39.3 | 75° | 0.09 / 0.12 / 0.20 | 7 dmg, push 100 + 0.5×%, 0.04 / 0.07 / 0.10 | its heavy pushes moderately (a light weapon: quick, and light on stamina); hold 0.4 s to charge, let go to dash forward and slash: launches with push 300 + 4.2×% (it can't be thrown) |
 | **Trident** | heavy | 8 | 250 + 3.6×% | 40 | thrust | 0.08 / 0.10 / 0.22 | 4 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | goes in the gun slot (it counts as your gun); a straight thrust, no arc; hold to throw it on its chain (reach 230): a catch takes 6, is stunned and reeled to melee range (stunned 0.45 s more); a miss roots you until it's reeled back |
 | **Shovel** | heavy | 9 | 240 + 4×% | 19.4 | 70° | 0.10 / 0.10 / 0.28 | 4.5 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | swings from below to above; launches straight up |
-| **Bone Club** | heavy | 7 | 200 + 3×% | 25.8 | 80° | 0.14 / 0.10 / 0.30 | 5 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | hold to wind up (full in 1.2 s): the longer, the harder (90%: 9 damage, push 300 + 5×%; full: 11, push 340 + 5.8×% at 45°, a critical); you walk slower as it winds up (10% when full); launches flat and far |
+| **Oooga Booga** | heavy | 7 | 200 + 3×% | 25.8 | 80° | 0.14 / 0.10 / 0.30 | 5 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | hold to wind up (full in 1.2 s): the longer, the harder (90%: 9 damage, push 300 + 5×%; full: 11, push 340 + 5.8×% at 45°, a critical); you walk slower as it winds up (10% when full); launches flat and far |
 | **Cleaver** | heavy | 15 | 200 + 3.2×% | 14.6 | 70° | 0.10 / 0.08 / 0.30 | 7.5 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | hold 0.35 s to throw one in an arc (you keep yours; the next throw is ready 2.5 s later): 9 damage, push 200 + 2.5×%; leaves them bleeding: 10 more over 5 s (a new cut starts it over; thrown too) |
 | **War Hammer** | heavy | 14 | 340 + 5.5×% | 22.1 | 90° | 0.22 / 0.12 / 0.40 | 7 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | — |
 | **Bone Axe** | heavy | 11 | 260 + 4.5×% | 24.9 | 75° | 0.12 / 0.10 / 0.30 | 5.5 dmg, push 120 + 1×%, 0.04 / 0.07 / 0.14 | goes through blocks |
@@ -92,6 +93,8 @@ Each weapon has a **heavy** (the melee button: these numbers) and a **jab** (its
 | **Fire** | 1.8 | explodes: radius 64, 16 damage, push 200 + 2×%; sets you on fire for 3 s (4%/s, no stun) |
 | **Smoke** | 1.6 | a cloud, radius 80, for 9 s: nobody sees into it |
 | **Poison** | 1.6 | a cloud, radius 70, for 8 s: 3%/s to anyone inside, no stun |
+| **Drowsy Gas** | 1.6 | a cloud, radius 70, for 6 s: anyone inside goes drowsy (30% slower; asleep after 3 s unless they take damage or shake it off with jerky moves: turns, jumps, dashes, taps down; the same move again in a row counts for less) |
+| **Polymorph Potion** | 1.4 | everyone within 64 px (you too) turns into a random animal for up to 3 s: they can walk and jump, nothing else; any damage, any status or a KO turns them back |
 | **Warp** | 1.4 | teleports you to where it goes off; hit someone on the way and you swap places |
 | **Sticky C4** | you choose | sticks to the first wall, floor or person it touches; press the grenade button again to set it off: radius 76, 14 damage, push 420 + 4.5×% |
 | **Money Grenade** | 2 | explodes: radius 76, 10 damage, push 380 + 4×%; showers 10 pieces of money that lie around 8 s and heal whoever grabs them |
@@ -114,3 +117,4 @@ Picked up like weapons; they turn up among the pickups.
 | **Mirror Rune** | for 15 s: bullets that hit you fly back at the shooter, until they add up to 50% damage (the one that goes past it too) (one rune at a time) |
 | **Genie Lamp** | rubbed for 1.5 s, then a wish: a legendary weapon (33%), a full heal (33%), a jinx (33%: 10 s shrunk, taking ×1.3 the push), or doom (1%: frozen, shaking, then launched off the stage) |
 | **Crystal Ball** | for 8 s your shots and thrown weapons home in on the nearest enemy, but hit for 50% of their damage |
+| **Ring of Cat** | takes both grenade slots (a grenade picked up replaces it): 7 times, the grenade button turns you into a random cat, and back; a cat runs 2× as fast, jumps and dashes; any attack, 10% of damage, any status (drowsy and asleep: it lies down) or a KO turns you back |

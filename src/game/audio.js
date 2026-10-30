@@ -24,7 +24,7 @@ const FAR = 760;
 const BURST = 3;
 
 // Which shot sound each gun makes.
-const SHOT_SOUNDS = { sniper: 'shot-sniper', golden: 'shot-sniper', bow: 'bow', cards: 'swing-light', railgun: 'zap', firestaff: 'flame', money: 'coin', slimer: 'throw', spores: 'hiss' };
+const SHOT_SOUNDS = { sniper: 'shot-sniper', snoozer: 'shot-sniper', golden: 'shot-sniper', bow: 'bow', cards: 'swing-light', railgun: 'zap', firestaff: 'flame', money: 'coin', slimer: 'throw', spores: 'hiss' };
 const shotSound = (gun) => SHOT_SOUNDS[gun] ?? (GUNS[gun]?.weight === 'light' ? 'shot-small' : 'shot-big');
 
 export class Sfx {
@@ -105,7 +105,7 @@ export class Sfx {
         return this.at('warp', e.x, e.y, 0.7);
       case 'critical':
       case 'launch':
-        // A full-power bat hit, the keyboard's big phrase landing: the home-run crack.
+        // A full-power club hit, the keyboard's big phrase landing: the big crack.
         return this.at('critical', e.x, e.y);
       case 'radiation':
         return this.at('warp', e.x, e.y, 0.8);

@@ -215,6 +215,40 @@ STAGES.training = {
   storm: { left: 48, right: 1744, top: -500, bottom: 200 },
 };
 
+// The night stages, under a starry sky: XXL takes on Smash's Final Destination and Battlefield.
+// A main platform 1.5 screens wide (960 px) with nothing but the drop around it; no storm unless
+// the rules ask for it (noStorm: the menus start it switched off). Thin platforms are wood.
+const NIGHT_LEFT = 416; // the main platform's left edge (it runs to 1376, centred like the rest)
+const NIGHT_W = 60; // tiles
+const nightStage = (name, blocks, extra = {}) => ({
+  name,
+  theme: 'night',
+  noStorm: true,
+  blocks,
+  spikes: [],
+  barrels: [],
+  doors: [],
+  // Spread across the platform, the first two well apart (1v1).
+  spawns: [596, 1196, 746, 1046, 516, 1276, 896, 826].map((x) => ({ x, y: 0 })),
+  pickupSpots: [{ x: 656, y: 0 }, { x: 1136, y: 0 }],
+  blast: { left: NIGHT_LEFT - 360, top: -520, right: NIGHT_LEFT + NIGHT_W * TILE + 360, bottom: 260 },
+  camera: { left: NIGHT_LEFT - 220, top: -420, right: NIGHT_LEFT + NIGHT_W * TILE + 220, bottom: 170 },
+  // (The storm's walls start out by the blast zone, off the screen: you fly off the sides freely.)
+  storm: { left: NIGHT_LEFT - 340, right: NIGHT_LEFT + NIGHT_W * TILE + 340, top: -520, bottom: 260 },
+  ...extra,
+});
+
+// La Bajaita: a stone slab floating in the night sky, and nothing else (bare: not even ammo
+// chests). For 1v1.
+STAGES.bajaita = nightStage('La Bajaita', [block(NIGHT_LEFT, 0, NIGHT_W, 2, 'slab')], { bare: true });
+
+// La Azotea: the flat roof of a tall building over the night city, three wooden platforms above it.
+STAGES.azotea = nightStage(
+  'La Azotea',
+  [block(NIGHT_LEFT, 0, NIGHT_W, 2, 'roof'), block(560, -80, 12, 1, 'plank', true), block(1040, -80, 12, 1, 'plank', true), block(800, -160, 12, 1, 'plank', true)],
+  { pickupSpots: [{ x: 656, y: 0 }, { x: 1136, y: 0 }, { x: 896, y: -160 }] },
+);
+
 // Random stages: the menu choice MIXED becomes "mixed-<seed>" when a match starts (rollStage), and
 // everyone builds the same layout from that id (getStage).
 export const MIXED = 'mixed';

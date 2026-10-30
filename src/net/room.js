@@ -15,6 +15,8 @@ export const serverUrl = () => import.meta.env.VITE_SERVER_URL || `${location.pr
 // To see how online play looks and feels at a real ping, on localhost.
 const asked = import.meta.env.DEV && typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
 export const PRACTICE_LAG = { ms: Math.max(0, Math.min(1000, Number(asked?.get('lag')) || 0)), jitter: Math.max(0, Math.min(200, Number(asked?.get('jitter')) || 0)) };
+// (&delay=N, dev page only: try another input delay, 0 to 6 ticks; see INPUT_DELAY in rollback.js.)
+export const PRACTICE_DELAY = asked?.has('delay') ? Math.max(0, Math.min(6, Number(asked.get('delay')) | 0)) : null;
 
 // Messages one way, held back by the practice lag (in order); straight through without it.
 function delayLine(deliver) {

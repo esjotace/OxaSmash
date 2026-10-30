@@ -4,6 +4,7 @@
 // rounds, the storm and the crown stay as set (1 GUN. 2 FISTS. 3 LIVES also sets 3 lives).
 // Whatever's picked is remembered on this device for next time.
 import { DUEL_MODES } from './net/duels.js';
+import { getStage } from './sim/stage.js';
 
 export const PRESETS = Object.keys(DUEL_MODES).filter((k) => k !== 'crowd');
 const SWITCHES = ['melee', 'ranged', 'thrown', 'items'];
@@ -48,6 +49,12 @@ export function rulesPicker(prefix, storeKey, onChange = () => {}) {
     if (byHand) changed();
   }
 
+  // A stage without a storm (La Bajaita, La Azotea): the storm starts switched off (it can be put
+  // back on).
+  $('Stage').addEventListener('change', () => {
+    if (getStage($('Stage').value)?.noStorm) $('Storm').value = 'off';
+  });
+
   // Changing what's in play by hand: Custom rules.
   for (const s of SWITCHES) $(cap(s)).addEventListener('change', () => pick('custom'));
   for (const name of ['Lives', 'Rounds', 'Stage', 'Crown', 'Storm', ...SWITCHES.map(cap)]) $(name)?.addEventListener('change', changed);
@@ -84,8 +91,6 @@ export function rulesPicker(prefix, storeKey, onChange = () => {}) {
   }
 
   return {
-    // Pick a preset (or 'custom') as if by hand: shown, remembered.
-    choose: (key) => pick(key, true),
     // The rules as picked: what's in play (the preset's, or the custom switches), and the preset.
     read() {
       const rules = preset === 'custom' ? Object.fromEntries(SWITCHES.map((s) => [s, $(cap(s)).checked])) : presetRules(preset);

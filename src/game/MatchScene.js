@@ -4,11 +4,12 @@
 //            (rollback: see net/rollback.js)
 import Phaser from 'phaser';
 import { COVER_ART } from './cover.js';
-import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE } from '../sim/constants.js';
+import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE, CAT, ANIMALS } from '../sim/constants.js';
 import { createWorld, step, spawnWeapon, setHealthRule } from '../sim/world.js';
 import { toView } from '../sim/view.js';
 import { NEUTRAL } from '../sim/input.js';
-import { Rollback } from '../net/rollback.js';
+import { Rollback, INPUT_DELAY } from '../net/rollback.js';
+import { PRACTICE_DELAY } from '../net/room.js';
 import { createBot, botInput, configureBot } from '../bots/bot.js';
 import { Controls } from './controls.js';
 import { Spectator } from './spectate.js';
@@ -26,7 +27,7 @@ const LATE_SHOT = { after: 1, ease: 22, max: 600 }; // ticks late to count; catc
 // Real art, where it exists (public/art/). Anything missing falls back to the greybox shapes.
 // Loaded by the match (only what isn't already), or ahead of it: see warmUp in game.js.
 export function loadArt(scene) {
-  for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!scene.textures.exists(key)) scene.load.image(key, `art/${key}.png`);
+  for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'hand-skeleton', 'hand-orc', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!scene.textures.exists(key)) scene.load.image(key, `art/${key}.png`);
   if (!scene.textures.exists('village')) scene.load.image('village', 'art/village/tiles.png');
   // Cloud puffs (smoke, poison, spore patches): animation strips of 64×64 frames.
   // Controller button pictures: 16×16 frames (see padicons.js).
@@ -40,13 +41,23 @@ export function loadArt(scene) {
   for (const key of SOUNDS) if (!scene.cache.audio.exists(key)) scene.load.audio(key, `sounds/${key}.wav`);
   if (!scene.textures.exists('dungeon')) scene.load.image('dungeon', 'art/dungeon/tiles.png');
   if (!scene.textures.exists('dungeon-wall')) scene.load.image('dungeon-wall', 'art/dungeon/wall.png');
+  if (!scene.textures.exists('dungeon-wood')) scene.load.image('dungeon-wood', 'art/dungeon/wood.png');
+  // The night stages: the moon, and the night city's skyline layers (see night.js).
+  for (const key of ['moon', 'city1', 'city2', 'city3', 'city4']) if (!scene.textures.exists(`night-${key}`)) scene.load.image(`night-${key}`, `art/night/${key}.png`);
   // Characters: idle (32x32 frames), run (64x64), and a single stun pose.
   for (const c of CHARACTERS) {
     if (scene.textures.exists(`${c}-idle`)) continue;
     scene.load.spritesheet(`${c}-idle`, `art/chars/${c}-idle.png`, { frameWidth: 32, frameHeight: 32 });
     scene.load.spritesheet(`${c}-run`, `art/chars/${c}-run.png`, { frameWidth: 64, frameHeight: 64 });
     scene.load.image(`${c}-stun`, `art/chars/${c}-stun.png`);
+    scene.load.image(`${c}-sleep`, `art/chars/${c}-sleep.png`);
+    scene.load.image(`${c}-fall`, `art/chars/${c}-fall.png`);
   }
+  // The Ring of Cat's cats and the polymorph potion's animals (tools/critter_art.py).
+  for (let n = 1; n <= CAT.kinds; n++) {
+    for (const a of ['idle', 'walk', 'run', 'sitting', 'laying', 'sleeping', 'meow']) if (!scene.textures.exists(`cat${n}-${a}`)) scene.load.spritesheet(`cat${n}-${a}`, `art/cats/cat${n}-${a}.png`, { frameWidth: 50, frameHeight: 50 });
+  }
+  for (const a of ANIMALS) if (!scene.textures.exists(`animal-${a}`)) scene.load.spritesheet(`animal-${a}`, `art/animals/${a}.png`, { frameWidth: 16, frameHeight: 16 });
   // Building kits: the index (kit.json) lists the pieces; each loads as "<kit>/<piece>".
   const st = STAGES.warehouse;
   for (const kit of new Set([...st.kitRuns, ...st.facades].map((r) => r.kit).filter(Boolean))) {
@@ -98,7 +109,7 @@ export class MatchScene extends Phaser.Scene {
 
     if (mode === 'client') {
       // The match runs here too, from how the server made it (see net/rollback.js).
-      this.net = new Rollback(this.cfg.init, you, (events) => this.draw.effects(events));
+      this.net = new Rollback(this.cfg.init, you, (events) => this.draw.effects(events), PRACTICE_DELAY ?? INPUT_DELAY);
       this.view = toView(this.net.world);
       room.on('match', (msg) => this.net.receive(msg));
       // (Loaded: the server can start once everyone is.)
@@ -110,6 +121,10 @@ export class MatchScene extends Phaser.Scene {
       const crown = roster.findIndex((p) => p.crowned);
       this.world = createWorld({ players: roster.length, stocks, stage, seed: (Date.now() * 2654435761) >>> 0, training: !!this.cfg.training, rules: this.cfg.rules, storm, crown, crownRule: this.cfg.crownRule ?? 'show' });
       this.bots = roster.map((p, i) => (p.kind === 'bot' ? createBot(p.level, (Date.now() + i * 7919) >>> 0) : null));
+      // Each player's presses, held back by the input delay (as online, so play feels the same
+      // everywhere: see INPUT_DELAY in net/rollback.js).
+      this.delay = PRACTICE_DELAY ?? INPUT_DELAY;
+      this.pressed = roster.map(() => []);
       // (Training: the dummies as set in the menu.)
       if (this.cfg.dummies) {
         this.setDummies(this.cfg.dummies);
@@ -237,8 +252,12 @@ export class MatchScene extends Phaser.Scene {
   }
 
   inputFor(i) {
-    // (With the menu up, your own players stand still: online matches keep going.)
-    if (this.controls[i]) return this.menuOpen ? this.controls[i].idle() : this.controls[i].read(this.world.fighters[i]);
+    if (this.controls[i]) {
+      // (With the menu up, your own players stand still: online matches keep going.)
+      const queue = this.pressed[i];
+      queue.push(this.menuOpen ? this.controls[i].idle() : this.controls[i].read(this.world.fighters[i]));
+      return queue.length > this.delay ? queue.shift() : NEUTRAL;
+    }
     return this.bots[i] ? botInput(this.world, i, this.bots[i]) : NEUTRAL;
   }
 

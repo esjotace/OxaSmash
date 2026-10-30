@@ -79,7 +79,7 @@ export function startPadNav({ root, back, busy }) {
   };
 
   function focusables(el) {
-    return [...el.querySelectorAll('button, select, input, [tabindex]:not([tabindex="-1"])')].filter((e) => !e.disabled && e.offsetParent !== null && !e.closest('[hidden]'));
+    return [...el.querySelectorAll('button, select, input, [tabindex]:not([tabindex="-1"])')].filter((e) => !e.disabled && e.offsetParent !== null && !e.closest('[hidden], [inert]'));
   }
 
   function focus(el) {

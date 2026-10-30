@@ -1,5 +1,5 @@
 // What the renderer needs from the world: drawn locally, and sent by the host to guests ~30×/s.
-import { GUNS, GRENADES, LOOT, ITEMS, HAVEN, GUN_THROW, AMMO_CHEST, STYLE } from './constants.js';
+import { GUNS, GRENADES, LOOT, ITEMS, HAVEN, GUN_THROW, AMMO_CHEST, STYLE, ANIMALS } from './constants.js';
 import { stormStatus, sparesOf } from './world.js';
 
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -17,6 +17,7 @@ export function toView(world) {
       id: f.id,
       x: r1(f.x),
       y: r1(f.y),
+      vx: Math.round(f.vx),
       vy: Math.round(f.vy),
       facing: f.facing,
       aimX: r2(f.aimX),
@@ -52,6 +53,18 @@ export function toView(world) {
       // The grenade in hand: its kind and how much of its fuse is left (0..1).
       cooking: f.cook >= 0 ? { kind: f.cooking, left: r2(1 - f.cook / GRENADES[f.cooking].fuse) } : null,
       burning: f.burn > 0,
+      asleep: f.sleep > 0,
+      // Asleep: how far mashing has gone toward waking up (0..1), and the direction held (the
+      // sleeper wiggles that way); null awake.
+      waking: f.sleep > 0 ? r2(Math.min(1, f.shake)) : null,
+      held: f.sleep > 0 ? [f.heldX, f.heldY] : null,
+      // The Ring of Cat: uses left, and which cat you are now (0: none); the animal you've been
+      // turned into (an ANIMALS key), or null.
+      ring: f.ring,
+      cat: f.cat,
+      animal: f.animal >= 0 ? ANIMALS[f.animal] : null,
+      // Drowsy: how far it's been shaken off (0..1), or null.
+      drowsy: f.drowsy > 0 ? r2(f.shake) : null,
       slipping: f.slip > 0,
       hasted: f.haste > 0,
       uses: f.uses, // bites taken out of the melee weapon (a bitten carrot is drawn rotten)

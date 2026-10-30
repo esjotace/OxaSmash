@@ -1,7 +1,7 @@
 // Words for every gun, melee weapon and grenade, straight from the numbers in constants.js: a
 // one-line blurb, the stats, and the quirks. Used by the Training menu (to show what you're about
 // to spawn) and by tools/items_md.mjs (ITEMS.md), so both always match the game.
-import { GUNS, MELEE, GRENADES, ITEMS, LEGENDARY, WISH, CARRY, HAVEN, RADIATION, LIGHT_THROW, CASH, LOOT, SLIME, FOOTHOLD } from './constants.js';
+import { GUNS, MELEE, GRENADES, SLEEP, DROWSY, CAT, ITEMS, LEGENDARY, WISH, CARRY, HAVEN, RADIATION, LIGHT_THROW, CASH, LOOT, SLIME, FOOTHOLD } from './constants.js';
 import { throwOf } from './world.js';
 
 export const n = (v, d = 1) => (Number.isInteger(v) ? String(v) : v.toFixed(d).replace(/\.0+$/, ''));
@@ -22,6 +22,7 @@ export const BLURBS = {
   bow: 'Draw, aim, loose. Arrows in walls become footholds.',
   cards: 'Deal everyone in a line a bad hand.',
   golden: 'Three bullets, ever. Make them count.',
+  snoozer: 'One round. Whoever it hits takes a nap.',
   railgun: 'Charge it up and erase a line through the stage, walls and all.',
   firestaff: 'A short cone of magical fire.',
   money: 'Make it rain: coins, bills and the odd diamond.',
@@ -36,7 +37,7 @@ export const BLURBS = {
   nodachi: 'Hold for a dashing, launching slash.',
   trident: 'Thrust, or hook them on its chain and reel them in.',
   shovel: 'Scoops people straight up.',
-  bat: 'Wind it up for a home run.',
+  club: 'Wind it up. Bonk.',
   warning: 'Radioactive zone ahead. Charge it up and weird things happen to everyone nearby.',
   cleaver: 'Big chops that leave them bleeding.',
   hammer: 'Slow. Devastating.',
@@ -56,7 +57,9 @@ export const BLURBS = {
   fire: 'Burns everyone caught in it.',
   smoke: 'A cloud nobody can see into.',
   poison: 'A cloud that slowly hurts.',
+  drowsy: 'A pink cloud that makes you sleepy. Keep moving.',
   warp: 'Teleports you where it lands, or swaps you with whoever it hits.',
+  polymorph: 'Turns everyone it splashes into a random animal.',
   c4: 'Stick it anywhere, then set it off when you like.',
   cashnade: 'A real grenade that leaves money everywhere. Grab it to heal.',
   blackhole: 'No damage: it just pulls everyone in.',
@@ -71,6 +74,7 @@ export const BLURBS = {
   mirror: 'Bullets that hit you fly straight back, for a while.',
   lamp: 'Rub it and make a wish. Not every wish goes well.',
   crystal: 'Your shots seek out the nearest enemy, but hit softer.',
+  catring: 'Become a cat. Seven times.',
 };
 
 export function gunNotes(g) {
@@ -90,6 +94,7 @@ export function gunNotes(g) {
   if (g.jackpot) out.push(`a money bag that bursts (radius ${g.jackpot.radius}, push ${push(g.jackpot.knockback, g.jackpot.knockbackGrowth)}, no damage) into ${g.jackpot.pieces} pieces of money; they lie around ${LOOT.lie + LOOT.blink} s and heal whoever grabs them by their shot damage`);
   if (g.hops) out.push(`lobbed slime hops ${g.hops} times; each landing leaves glue (${SLIME.width} px, ${SLIME.time} s)`);
   if (g.spore) out.push(`about 1 spore in ${g.spore.every} leaves a poison patch (radius ${g.spore.radius}, ${g.spore.time} s, ${g.spore.perSecond}%/s)`);
+  if (g.sleep) out.push(`puts whoever it hits to sleep for ${SLEEP.time} s (mashing moves wakes them after ${SLEEP.min} s; any hit wakes them)`);
   if (g.magazines === 1) out.push('no spare magazine');
   if (g.heavyThrow) out.push("thrown, it doesn't come back");
   if (g.noCover) out.push("too big to fire from behind cover");
@@ -128,7 +133,7 @@ export function meleeQuirks(m) {
     );
   }
   if (m.uppercut) out.push('launches straight up');
-  if (m.homerun) out.push('launches flat and far');
+  if (m.flat) out.push('launches flat and far');
   if (m.unblockable) out.push('goes through blocks');
   if (m.blocksBullets) out.push('blocking with it also stops bullets from the front');
   if (m.bonk) out.push(`its hits stun ${m.bonk} s longer`);
@@ -150,12 +155,14 @@ export function grenadeEffect(k) {
     return s;
   }
   if (k.hole) return `no damage: for ${k.hole.time} s it pulls everyone within ${k.hole.radius} px toward its middle (up to ${k.hole.pull} px/s), where you float`;
+  if (k.cloud?.drowsy) return `a cloud, radius ${k.cloud.radius}, for ${k.cloud.time} s: anyone inside goes drowsy (${n(DROWSY.slow * 100)}% slower; asleep after ${DROWSY.time} s unless they take damage or shake it off with jerky moves: turns, jumps, dashes, taps down; the same move again in a row counts for less)`;
   if (k.cloud) return `a cloud, radius ${k.cloud.radius}, for ${k.cloud.time} s${k.cloud.perSecond ? `: ${k.cloud.perSecond}%/s to anyone inside, no stun` : ': nobody sees into it'}`;
   if (k.remote) {
     const e = k.explode;
     return `sticks to the first wall, floor or person it touches; press the grenade button again to set it off: radius ${e.radius}, ${e.damage} damage, push ${push(e.knockback, e.knockbackGrowth)}`;
   }
   if (k.warp) return 'teleports you to where it goes off; hit someone on the way and you swap places';
+  if (k.polymorph) return `everyone within ${k.polymorph.radius} px (you too) turns into a random animal for up to ${k.polymorph.time} s: they can walk and jump, nothing else; any damage, any status or a KO turns them back`;
   if (k.plant) return `plants itself where it first lands on a floor: that stretch of the stage (its section on a random stage, or ${HAVEN.width} px) turns melee only, in your colour: shots and thrown things (not thrown melee weapons) vanish entering it, and guns don't fire inside it. Spend ${k.plant.hold} s in there and you gain a life; step out of it for more than ${HAVEN.away} s and it fades away. A new banner replaces it`;
   return '—';
 }
@@ -170,6 +177,7 @@ export function itemEffect(it) {
     return `for ${r.time} s: ${what} (one rune at a time)`;
   }
   if (it.wish) return `rubbed for ${it.wish.rub} s, then a wish: a legendary weapon (${Math.round(WISH.legendary * 100)}%), a full heal (${Math.round(WISH.heal * 100)}%), a jinx (${Math.round((1 - WISH.legendary - WISH.heal - WISH.death) * 100)}%: ${WISH.jinx.time} s shrunk, taking ×${WISH.jinx.push} the push), or doom (${Math.round(WISH.death * 100)}%: frozen, shaking, then launched off the stage)`;
+  if (it.ring) return `takes both grenade slots (a grenade picked up replaces it): ${CAT.uses} times, the grenade button turns you into a random cat, and back; a cat runs ${CAT.speed}× as fast, jumps and dashes; any attack, ${CAT.breakAt}% of damage, any status (drowsy and asleep: it lies down) or a KO turns you back`;
   if (it.homing) return `for ${it.homing.time} s your shots and thrown weapons home in on the nearest enemy, but hit for ${Math.round(it.homing.damage * 100)}% of their damage`;
   return '—';
 }

@@ -20,19 +20,27 @@ const KEEP = 240; // ticks of saved worlds and inputs kept (4 s)
 // past what the server has confirmed to play on guesses (beyond that, wait), how far behind the
 // confirmed ticks to watch from, and at most how many ticks to play in a frame.
 export const SYNC = { early: 2, gain: 0.5, aheadMax: 30, watchBehind: 3, catchUp: 8 };
+// Input delay (ticks): your input counts this many ticks after you press it, here and for everyone
+// (and in local play too, so it feels the same everywhere: see MatchScene.inputFor).
+// Your browser then needs to run that much less far ahead of the server, so every guess about the
+// others is that much shorter: their corrections are smaller. 2 ticks is 33 ms (see
+// docs/netcode-notes.md for why, and what it was tuned against).
+export const INPUT_DELAY = 2;
 // Fallen well behind (the window was hidden, the computer stalled): up to `replayMax` ticks behind,
 // the missed time is played back at once (silently); further, the server's whole world is asked for.
 // `behind`: how far behind counts as fallen behind.
 const CATCH_UP = { behind: 30, replayMax: 600 };
-const SNAP_PAST = 64; // px: put back further than this (a respawn), a fighter just jumps there
-const EASE = 18; // how fast a correction is eased out (per second)
+const SNAP_PAST = 128; // px: put back further than this (a respawn), a fighter just jumps there
+const EASE = 7; // how fast a correction is eased out (per second): most of it over ~150 ms, a drift, not a snap
 
 // The world a match starts from (the same on the server and every browser).
 export const makeWorld = (init) => createWorld({ ...init, storm: STORM_PACE[init.stormPace] ?? {} });
 
 export class Rollback {
-  // init: how the server made the match's world; you: your fighter (-1: only watching).
-  constructor(init, you, onEvents = () => {}) {
+  // init: how the server made the match's world; you: your fighter (-1: only watching);
+  // delay: the input delay (ticks, see INPUT_DELAY).
+  constructor(init, you, onEvents = () => {}, delay = INPUT_DELAY) {
+    this.delay = Math.max(0, Math.min(6, delay | 0));
     this.world = makeWorld(init);
     this.you = you;
     this.onEvents = onEvents;
@@ -107,7 +115,7 @@ export class Rollback {
       let input = null;
       if (this.you >= 0) {
         input = read();
-        send({ t: 'in', i: encodeInput(input), k: this.world.tick });
+        send({ t: 'in', i: encodeInput(input), k: this.world.tick + this.delay });
       }
       this.advance(input);
     }
@@ -142,10 +150,11 @@ export class Rollback {
   }
 
   // Play the next tick (your input on it, if you're playing).
+  // Play the next tick. input: what you pressed just now, which counts `delay` ticks from now.
   advance(input = null) {
     const t = this.world.tick;
     // (Exactly as the server will get it: through the same encoding, aim rounded and all.)
-    if (input) this.mine.set(t, decodeInput(encodeInput(input)));
+    if (input) this.mine.set(t + this.delay, decodeInput(encodeInput(input)));
     this.play(t);
   }
 
@@ -228,7 +237,7 @@ export class Rollback {
   // Your clock put back ahead of the server's, by your ping and a little (see SYNC).
   rejoin() {
     const ping = this.you >= 0 ? this.pings?.[this.you] : null;
-    this.clock = this.world.tick + (this.you >= 0 ? (Number.isFinite(ping) ? ping / 1000 / DT : 4) + SYNC.early : 0);
+    this.clock = this.world.tick + (this.you >= 0 ? Math.max(0, (Number.isFinite(ping) ? ping / 1000 / DT : 4) + SYNC.early - this.delay) : 0);
   }
 
   // The server's fingerprint of its world at tick k: does this copy agree? (null: can't tell yet.)

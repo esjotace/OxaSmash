@@ -3,13 +3,14 @@
 // Two cameras: the main one follows the action; the HUD camera stays put.
 import Phaser from 'phaser';
 import { GUN_POINTS } from '../sim/gunPoints.js';
-import { STRIKE, MELEE, PISTOL, GUNS, GRENADES, DASH, DOOR, VIEW_W, VIEW_H, TILE, SPIKES, BARREL, TILTED_GUNS, FOOTHOLD, HEADSHOT, FIGHTER } from '../sim/constants.js';
+import { STRIKE, MELEE, PISTOL, GUNS, GRENADES, DASH, DOOR, VIEW_W, VIEW_H, TILE, SPIKES, BARREL, TILTED_GUNS, FOOTHOLD, HEADSHOT, FIGHTER, CAT, ANIMALS } from '../sim/constants.js';
 import { swingAngle, gunOrigin, aimOrigin, spreadOf, throwOf, thrustReach, weaponOf, spinBall, swingPoints, bodyHeight } from '../sim/world.js';
 import { MELEE_POINTS } from '../sim/meleePoints.js';
 import { drawDosText, wrap, LINE, lineWidth } from './dosfont.js';
 import { iconFrame } from './padicons.js';
 import { buildVillage, isVillage, VILLAGE_LOOKS } from './village.js';
 import { buildCovers, updateCovers } from './cover.js';
+import { buildNight, isNight, NIGHT_LOOKS } from './night.js';
 import { koLine } from './kolines.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
@@ -39,7 +40,38 @@ export function makeCharacterAnims(scene) {
     scene.anims.create({ key: `${c}-idle`, frames: scene.anims.generateFrameNumbers(`${c}-idle`, { start: 0, end: 3 }), frameRate: 6, repeat: -1 });
     scene.anims.create({ key: `${c}-run`, frames: scene.anims.generateFrameNumbers(`${c}-run`, { start: 0, end: 5 }), frameRate: 12, repeat: -1 });
   }
+  // Falling asleep: the fall strip cut into frames the size of the stun pose.
+  for (const c of CHARACTERS) {
+    const key = `${c}-fall`;
+    if (!scene.textures.exists(key) || !scene.textures.exists(`${c}-stun`) || scene.textures.get(key).frameTotal > 2) continue;
+    const w = scene.textures.get(`${c}-stun`).getSourceImage().width;
+    const tex = scene.textures.get(key);
+    const src = tex.getSourceImage();
+    for (let k = 0; k < Math.floor(src.width / w); k++) tex.add(k, 0, k * w, 0, w, src.height);
+  }
+  // The Ring of Cat's cats: idle, walk and run loops; lying down and a meow, once each.
+  for (let n = 1; n <= CAT.kinds; n++) {
+    const k = `cat${n}`;
+    if (!scene.textures.exists(`${k}-idle`) || scene.anims.exists(`${k}-idle`)) continue;
+    const anim = (name, fps, repeat = -1) => scene.anims.create({ key: `${k}-${name}`, frames: scene.anims.generateFrameNumbers(`${k}-${name}`), frameRate: fps, repeat });
+    anim('idle', 8);
+    anim('walk', 10);
+    anim('run', 16);
+    anim('laying', 10, 0);
+    anim('meow', 8, 0);
+  }
+  // The polymorph potion's animals: a walk (standing still is just the first frame).
+  for (const a of ANIMALS) {
+    if (!scene.textures.exists(`animal-${a}`) || scene.anims.exists(`${a}-walk`)) continue;
+    scene.anims.create({ key: `${a}-walk`, frames: scene.anims.generateFrameNumbers(`animal-${a}`, { start: 4, end: 7 }), frameRate: 10, repeat: -1 });
+  }
 }
+
+// How long falling asleep takes to play (s), out of the sleep's SLEEP.time.
+const FALL_TIME = 1;
+
+// Where a cat's feet are in its 50 px frames (drawn standing on the fighter's feet).
+const CAT_FEET = 32 / 50;
 
 // Background art (public/art/<name>.png): distant towers and nearer buildings, mixed at random.
 export const CITY = {
@@ -101,6 +133,10 @@ export class Renderer {
     } else if (isVillage(this.st) && art('village')) {
       // The village dresses itself from its tileset (src/game/village.js).
       layers.push(...buildVillage(scene, fixed));
+    } else if (isNight(this.st) && art('dungeon')) {
+      // The night stages: a starry sky, a floating slab or a rooftop (src/game/night.js).
+      this.nightArt = buildNight(scene, fixed);
+      layers.push(...this.nightArt);
     } else {
       const sky = scene.add.graphics();
       const back = scene.add.graphics();
@@ -165,7 +201,7 @@ export class Renderer {
     this.hands = scene.add.graphics();
     // Floating hands from the character pack: [0] holds the gun-slot weapon or waits as a fist,
     // [1] holds the swinging melee weapon or throws the punch.
-    this.handImgs = art('hand') ? roster.map(() => [0, 1].map(() => scene.add.image(0, 0, 'hand').setVisible(false))) : null;
+    this.handImgs = art('hand') ? roster.map((_, i) => [0, 1].map(() => scene.add.image(0, 0, this.handKey(i)).setVisible(false))) : null;
     this.speed = scene.add.graphics();
     this.fx = scene.add.graphics();
     this.stormG = scene.add.graphics();
@@ -175,7 +211,9 @@ export class Renderer {
         .text(0, 0, p.name, { fontFamily: FONT, fontSize: '8px', color: PLAYER_COLORS[i].css, resolution: this.res })
         .setOrigin(0.5, 1),
     );
-    this.world.add([...layers, this.g, ...this.blades, ...this.katanas, ...(this.guns ?? []), this.hands, ...(this.handImgs ?? []).flat(), ...this.heldNades, this.speed, ...this.tags, this.cloudG, this.fx, this.stormG, this.crossG]);
+    // Asleep: "z.. zz.. zzz" over the sleeper, in light blue.
+    this.zzz = roster.map(() => scene.add.text(0, 0, '', { fontFamily: FONT, fontSize: '8px', fontStyle: 'bold', color: '#9fd8ff', stroke: '#0b0d18', strokeThickness: 2, resolution: this.res }).setOrigin(0, 1).setVisible(false));
+    this.world.add([...layers, this.g, ...this.blades, ...this.katanas, ...(this.guns ?? []), this.hands, ...(this.handImgs ?? []).flat(), ...this.heldNades, this.speed, ...this.tags, ...this.zzz, this.cloudG, this.fx, this.stormG, this.crossG]);
     // Training: hitboxes drawn over everything (see drawHitboxes; off unless switched on).
     this.showHitboxes = false;
     this.hitboxG = scene.add.graphics();
@@ -323,6 +361,19 @@ export class Renderer {
         case 'heal':
           this.burst(e.x, e.y, 0, -1, 10, 70, C('#7dff9a'), -40, 0.9);
           break;
+        case 'morph':
+          // Turned into a cat (meow!) or an animal: a puff.
+          this.dust(e.x, e.y, 0.8);
+          this.burst(e.x, e.y, 0, -1, 10, 80, e.cat ? C('#5be38a') : 0xffffff, 0, 1);
+          if (e.cat) (this.meowAt ??= [])[e.id] = this.anim;
+          break;
+        case 'unmorph':
+          this.dust(e.x, e.y, 0.8);
+          break;
+        case 'poof':
+          // The polymorph potion breaking: a ring of rainbow sparks.
+          for (const color of ['#ff5d73', '#ffcf6b', '#7dffb0', '#8ef0ff', '#b78cff']) this.burst(e.x, e.y, 0, 0, 6, 160, C(color), 0, 0.9);
+          break;
         case 'item':
           this.burst(e.x, e.y, 0, -1, 8, 70, C('#fff4c2'), 0, 1.2);
           break;
@@ -423,7 +474,7 @@ export class Renderer {
           this.burst(e.x, e.y, 0, -1, 4, 50, C('#d9cfa0'), 0, 1.4);
           break;
         case 'critical':
-          // A full-power bat hit: the big crack.
+          // A full-power club hit: the big crack.
           this.shake(1);
           this.burst(e.x, e.y, 0, 0, 36, 300, C('#ffe14d'), 40);
           this.burst(e.x, e.y, 0, 0, 16, 200, 0xffffff, 0);
@@ -828,6 +879,8 @@ export class Renderer {
     const top = Math.round(f.y) - (low ? 22 : 30);
     const img = this.carried[i];
     const g = this.speed;
+    // The Ring of Cat: a green dot under the feet for each use left.
+    for (let k = 0; k < (f.ring ?? 0); k++) g.fillStyle(C('#5be38a'), 0.9).fillRect(x - f.ring + k * 2, Math.round(f.y) + 9, 1, 1);
     if (f.hidden) return img.setVisible(false);
     // The crystal ball: a purple magic fire burning above the head.
     if (f.homing) {
@@ -979,7 +1032,7 @@ export class Renderer {
   // Each cloud keeps spawning puffs (animated strips that swell and dissolve) at random spots in it,
   // so it churns; when a cloud is gone its last puffs play out.
   updatePuffs(view, dt) {
-    const LOOKS = { smoke: { every: 0.035, size: 1.6, alpha: 0.95 }, poison: { every: 0.07, size: 1.4, alpha: 0.6 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 } };
+    const LOOKS = { smoke: { every: 0.035, size: 1.6, alpha: 0.95 }, poison: { every: 0.07, size: 1.4, alpha: 0.6 }, spore: { every: 0.18, size: 0.9, alpha: 0.75 }, drowsy: { every: 0.06, size: 1.4, alpha: 0.6 } };
     const live = new Set();
     for (const c of view.clouds ?? []) {
       live.add(c.id);
@@ -987,13 +1040,14 @@ export class Renderer {
       let next = (this.cloudSpawn.get(c.id) ?? 0) - dt;
       for (; next <= 0 && c.t > 0.6; next += look.every) {
         // (Poison: now and then a skull.)
-        const key = c.kind === 'smoke' ? 'fx-smoke' : c.kind === 'spore' ? 'fx-spore' : Math.random() < 0.12 ? 'fx-skull' : 'fx-poison';
+        const key = c.kind === 'smoke' || c.kind === 'drowsy' ? 'fx-smoke' : c.kind === 'spore' ? 'fx-spore' : Math.random() < 0.12 ? 'fx-skull' : 'fx-poison';
         if (!this.scene.textures.exists(key)) break;
         const a = Math.random() * Math.PI * 2;
         const d = Math.sqrt(Math.random()) * c.r * 0.6;
         const scale = ((c.r * look.size) / 64) * (0.7 + Math.random() * 0.5);
         const img = this.scene.add.sprite(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d * 0.7, key, 0).setScale(scale).setAlpha(look.alpha * Math.min(1, c.t / 1.5)).setFlipX(Math.random() < 0.5);
         if (c.kind === 'smoke') img.setTint(0xc4c6d0);
+        else if (c.kind === 'drowsy') img.setTint(0xffb8dc);
         this.world.addAt(img, this.world.getIndex(this.cloudG) + 1);
         this.puffs.push({ img, age: 0, frames: this.scene.textures.get(key).frameTotal - 1, fps: c.kind === 'spore' ? 10 : 9 });
       }
@@ -1063,6 +1117,7 @@ export class Renderer {
       view.barrels.forEach((state, i) => state && drawBarrel(this.g, this.st.barrels[i], state === 2));
     }
     updateCovers(this.covers, view, this.g, dt, (x, y, size) => this.dust(x, y, size));
+    this.nightArt?.update(this.scene.cameras.main);
     if (this.moverArt && view.movers) {
       view.movers.forEach((m, i) => this.moverArt[i]?.update(m, this.anim));
     }
@@ -1180,12 +1235,62 @@ export class Renderer {
     if (this.sky) this.sky.tilePositionX = cam.scrollX * 0.05;
   }
 
+  // A character's floating hands: bony for the skeletons, green for the orcs, else the usual.
+  handKey(i) {
+    const c = this.chars[i] ?? '';
+    const key = c.startsWith('skeleton') ? 'hand-skeleton' : c.startsWith('orc') ? 'hand-orc' : 'hand';
+    return this.scene.textures.exists(key) ? key : 'hand';
+  }
+
+  // A cat (the Ring of Cat): asleep, lying down while drowsy, running, a meow when it turns, and
+  // sitting down after standing still a while.
+  catPose(s, f, i) {
+    const k = `cat${f.cat}`;
+    s.setOrigin(0.5, CAT_FEET);
+    const still = (this.catStill ??= []);
+    if (f.walk > 0 || !f.grounded || f.state !== 'ok') still[i] = this.anim;
+    if (f.asleep) {
+      s.anims.stop();
+      s.setTexture(`${k}-sleeping`);
+    } else if (f.drowsy !== null && f.drowsy !== undefined) s.play(`${k}-laying`, true);
+    else if (f.dashing || !f.grounded) {
+      s.anims.stop();
+      s.setTexture(`${k}-run`, 2);
+    } else if (f.walk > 0) s.play(`${k}-run`, true);
+    else if (this.anim - (this.meowAt?.[i] ?? -9) < 0.5) s.play(`${k}-meow`, true);
+    else if (this.anim - (still[i] ?? this.anim) > 2.5) {
+      s.anims.stop();
+      s.setTexture(`${k}-sitting`);
+    } else s.play(`${k}-idle`, true);
+  }
+
   // A character sprite: idle or run on the ground, the jump frame in the air,
   // squashed when crouched (more when tucked behind cover), white flash when hit.
   // x: where to draw it (the fighter's x, plus any jiggle).
   drawBody(s, f, i, a, low, x = Math.round(f.x)) {
     const c = this.chars[i];
-    if ((f.stunned || f.hitstun) && this.scene.textures.exists(`${c}-stun`)) {
+    s.setOrigin(0.5, 1);
+    if (!f.asleep && this.sleptAt) this.sleptAt[i] = undefined;
+    if (f.cat && this.scene.textures.exists(`cat${f.cat}-idle`)) {
+      this.catPose(s, f, i);
+    } else if (f.animal && this.scene.textures.exists(`animal-${f.animal}`)) {
+      // Turned into an animal: stock still (in the air too), walking only when it walks.
+      if (f.walk > 0) s.play(`${f.animal}-walk`, true);
+      else {
+        s.anims.stop();
+        s.setTexture(`animal-${f.animal}`, 0);
+      }
+    } else if (f.asleep && this.scene.textures.exists(`${c}-sleep`)) {
+      // Asleep: falling down slowly (the death animation, over FALL_TIME), then lying there. The
+      // fall is part of the sleep, not added to it.
+      const since = (this.sleptAt ??= []);
+      since[i] ??= this.anim;
+      const fall = this.scene.textures.exists(`${c}-fall`) ? this.scene.textures.get(`${c}-fall`) : null;
+      const n = fall ? fall.frameTotal - 1 : 0;
+      s.anims.stop();
+      if (n > 1) s.setTexture(`${c}-fall`, Math.min(n - 1, Math.floor(((this.anim - since[i]) / FALL_TIME) * n)));
+      else s.setTexture(`${c}-sleep`);
+    } else if ((f.stunned || f.hitstun) && this.scene.textures.exists(`${c}-stun`)) {
       // Stunned or reeling from a hit: the weak pose (the death animation's second frame).
       s.anims.stop();
       s.setTexture(`${c}-stun`);
@@ -1196,18 +1301,23 @@ export class Renderer {
     } else {
       s.play(f.walk > 0 && !low ? `${c}-run` : `${c}-idle`, true);
     }
+    // (A cat or an animal faces the way it moves; a person faces where they aim.)
+    const ways = (this.moveWay ??= []);
+    if (Math.abs(f.vx ?? 0) > 10) ways[i] = Math.sign(f.vx);
+    const way = f.cat || f.animal ? (ways[i] ?? f.facing) : f.facing;
     s.setVisible(true)
       .setPosition(x, Math.round(f.y))
-      .setFlipX(f.facing < 0)
+      .setFlipX(way < 0)
       .setAlpha(a)
       .setScale(1, low ? (f.tucked ? 0.55 : 0.7) : 1);
     if (f.flash) s.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
     else if (f.dodging && Math.floor(this.anim * 24) % 2 === 0) s.setTint(PLAYER_COLORS[i].hex).setTintMode(Phaser.TintModes.FILL);
+    else if (f.drowsy !== null && f.drowsy !== undefined && Math.sin(this.anim * 5) > 0) s.setTint(0xffc2e2).setTintMode(Phaser.TintModes.MULTIPLY);
     else s.clearTint();
     // Dashing: leave afterimages in the player's color behind.
     if (f.dashing && this.anim - (this.lastGhost?.[i] ?? -1) > 0.03) {
       (this.lastGhost ??= [])[i] = this.anim;
-      const img = this.scene.add.image(s.x, s.y, s.texture.key, s.frame.name).setOrigin(0.5, 1).setFlipX(s.flipX).setScale(s.scaleX, s.scaleY);
+      const img = this.scene.add.image(s.x, s.y, s.texture.key, s.frame.name).setOrigin(s.originX, s.originY).setFlipX(s.flipX).setScale(s.scaleX, s.scaleY);
       img.setTint(PLAYER_COLORS[i].hex).setTintMode(Phaser.TintModes.FILL).setAlpha(0.55);
       this.world.addAt(img, this.world.getIndex(s));
       this.ghosts.push({ img, life: 0.25 });
@@ -1220,7 +1330,14 @@ export class Renderer {
   hand(i, slot, x, y, a) {
     x = Math.round(x);
     y = Math.round(y);
-    if (this.handImgs) return this.handImgs[i][slot].setVisible(true).setPosition(x, y).setAlpha(a);
+    // (The hand art faces right: mirrored facing left.)
+    if (this.handImgs) {
+      // (The character can change mid-match: the hands follow it.)
+      const img = this.handImgs[i][slot];
+      const key = this.handKey(i);
+      if (img.texture.key !== key) img.setTexture(key);
+      return img.setVisible(true).setPosition(x, y).setAlpha(a).setFlipX((this.handFace?.[i] ?? 1) < 0);
+    }
     this.hands.fillStyle(C('#1a1620'), a).fillRect(x - 2, y - 2, 4, 4);
     this.hands.fillStyle(C('#e0a580'), a).fillRect(x - 1, y - 1, 3, 3);
   }
@@ -1249,8 +1366,10 @@ export class Renderer {
   }
 
   drawFighter(f, i, dt = 1 / 60) {
+    (this.handFace ??= [])[i] = f.facing;
     const tag = this.tags[i];
     if (!tag) return;
+    this.zzz[i].setVisible(!!f.asleep && f.state === 'ok');
     if (f.state !== 'ok') {
       tag.setVisible(false);
       this.guns?.[i].setVisible(false);
@@ -1267,12 +1386,16 @@ export class Renderer {
     const blink = f.invincible > 0 && Math.floor(f.invincible * 12) % 2 === 0;
     // Hidden in a doorway: drawn faint, in the shadows.
     const a = f.hidden ? 0.4 : blink ? 0.35 : 1;
+    // (Asleep: lying there, hands and weapons put away, like someone hidden.)
+    if (f.asleep || f.cat || f.animal) f = { ...f, hidden: true };
     const color = PLAYER_COLORS[i].hex;
     const coat = f.flash ? 0xffffff : color;
     const body = f.flash ? 0xffffff : Phaser.Display.Color.ValueToColor(color).darken(15).color;
     const dark = C('#292e3b');
     // (Frozen by the keyboard's big phrase: jiggling in place.)
-    const x = Math.round(f.x) + (f.frozen ? Math.round(Math.sin(this.anim * 70) * 2) : 0);
+    // (Asleep and pushing a way: wiggling that way.)
+    const wiggle = f.held && f.held[0] ? f.held[0] * (Math.sin(this.anim * 45) > 0 ? 2 : 1) : f.held && f.held[1] ? Math.round(Math.sin(this.anim * 45)) : 0;
+    const x = Math.round(f.x) + (f.frozen ? Math.round(Math.sin(this.anim * 70) * 2) : 0) + wiggle;
     const fc = f.facing;
     const low = f.crouching || f.blocking === 'crouch';
     // Crouched: legs fold and everything above drops 8 px (matching the shorter hitbox).
@@ -1566,8 +1689,26 @@ export class Renderer {
       g.fillStyle(C('#ffd966'), 1).fillRect(x - 8, y - 44, 16 * f.reload, 3);
     }
     // Marker over local players, in their color.
-    if (this.locals.includes(i) && this.roster[i].kind !== 'bot') g.fillStyle(color, 1).fillTriangle(x - 3, y - 48, x + 3, y - 48, x, y - 44);
-    tag.setVisible(true).setPosition(x, y - (f.reload > 0 ? 46 : 49));
+    // (Over a cat or an animal: lower, over its head.)
+    const up = f.cat || f.animal ? 24 : 0;
+    if (this.locals.includes(i) && this.roster[i].kind !== 'bot') g.fillStyle(color, 1).fillTriangle(x - 3, y - 48 + up, x + 3, y - 48 + up, x, y - 44 + up);
+    tag.setVisible(true).setPosition(x, y - (f.reload > 0 ? 46 : 49) + up);
+    if (f.asleep) {
+      // (Lying down: the z's start low, and grow one at a time.)
+      const n = Math.floor(this.anim * 2.5) % 3;
+      this.zzz[i].setText(['z..', 'z.. zz..', 'z.. zz.. zzz'][n]).setPosition(x + 2, Math.round(f.y) - 14 - ((this.anim * 6) % 3));
+    }
+    // Asleep: how close mashing has them to waking, a light blue bar.
+    if (f.waking !== null && f.waking !== undefined) {
+      g.fillStyle(0x000000, 0.6).fillRect(x - 8, Math.round(f.y) - 24, 16, 3);
+      g.fillStyle(C('#9fd8ff'), 1).fillRect(x - 8, Math.round(f.y) - 24, 16 * f.waking, 3);
+    }
+    // Drowsy: how far it's been shaken off, a pink bar over the head; now and then a pink z.
+    if (f.drowsy !== null && f.drowsy !== undefined) {
+      g.fillStyle(0x000000, 0.6).fillRect(x - 8, y - 41, 16, 3);
+      g.fillStyle(C('#ff9ccf'), 1).fillRect(x - 8, y - 41, 16 * f.drowsy, 3);
+      if (Math.random() < 0.03) this.particles.push({ x: x + 4, y: y - 34, vx: 8, vy: -14, life: 0.8, color: C('#ffc2e2'), g: 0, s: 2 });
+    }
   }
 
   drawParticles(dt) {
@@ -1657,17 +1798,18 @@ export class Renderer {
         const s = Math.min(1, maxW / fr.width, maxH / fr.height);
         img.setVisible(true).setScale(s).setPosition(wx, y).setAlpha(alpha);
       };
-      const gunKey = f.hasGun ? f.gun : f.blade ?? 'hand';
+      const fist = this.handKey(f.id);
+      const gunKey = f.hasGun ? f.gun : f.blade ?? fist;
       // The weapon in hand is bright, with a marker; the other one is dimmed.
       const gunHeld = f.active === 'gun';
-      icon(p.gunIcon, gunKey, by + 19, 32, 13, gunKey === 'hand' ? 0.3 : gunHeld ? 1 : 0.35);
+      icon(p.gunIcon, gunKey, by + 19, 32, 13, gunKey === fist ? 0.3 : gunHeld ? 1 : 0.35);
       // The style meter, under the damage: it fills pink. Its outline is the headshot cooldown:
       // white when a headshot will count, grey after one, and the white traced back round it
       // clockwise as the cooldown runs out.
       this.styleBar(g, bx + 6, by + 40, 38, 4, f.style ?? 0, f.styleCd ?? 0);
       // A special gun: outlined in red (the style meter doesn't reload it; ammo chests do).
       if (f.hasGun && GUNS[f.gun]?.weight === 'special') g.lineStyle(1, C('#ff4d5e'), 0.95).strokeRect(bx + 47, by + 11, 37, 16);
-      icon(p.meleeIcon, f.melee ?? 'hand', by + 36, 32, 11, gunHeld ? 0.3 : f.melee ? 1 : 0.7);
+      icon(p.meleeIcon, f.melee ?? fist, by + 36, 32, 11, gunHeld ? 0.3 : f.melee ? 1 : 0.7);
       g.fillStyle(0xffffff, 1).fillTriangle(wx - 5, (gunHeld ? by + 19 : by + 36) - 3, wx - 5, (gunHeld ? by + 19 : by + 36) + 3, wx - 2, gunHeld ? by + 19 : by + 36);
       p.ammo.setAlpha(gunHeld ? 1 : 0.45);
       const ax = wx + 35;
@@ -1682,9 +1824,13 @@ export class Renderer {
       if (f.hasGun && !view.infiniteAmmo) for (let m = 0; m < f.spareMags; m++) g.fillStyle(C('#d9dcf2'), 1).fillRect(ax + m * 4, by + 25, 3, 4);
       // Grenades carried, beside the melee weapon: the next one to throw first.
       p.nades.forEach((img, k) => {
-        const kind = f.grenades?.[k];
+        // (The Ring of Cat takes both slots: the ring, and a greyed-out copy beside it.)
+        const ring = f.ring > 0 && !f.grenades?.length;
+        const kind = ring ? 'catring' : f.grenades?.[k];
         img.setVisible(!!kind && this.scene.textures.exists(kind));
         if (kind && img.visible) img.setTexture(kind).setScale(Math.min(1, 10 / img.frame.height)).setPosition(ax + 4 + k * 11, by + 37);
+        if (ring && k === 1) img.setTint(0x555a70).setAlpha(0.6);
+        else img.clearTint().setAlpha(1);
       });
     });
     this.stormText.setText(view.waiting ? 'WAITING FOR PLAYERS…' : view.phase === 'play' && !view.training ? view.storm.text : '').setColor(view.waiting ? '#d9dcf2' : view.storm.text === 'FINAL ZONE' ? '#ffccd9' : '#ff7399');
@@ -1776,6 +1922,11 @@ function drawBullet(g, b, anim) {
     g.fillStyle(C('#fff0a0'), 1).fillRect(b.x - 1, b.y - 1, 3, 3);
     return;
   }
+  if (b.look === 'snoozer') {
+    g.lineStyle(1, C('#c58bff'), 0.8).lineBetween(b.x - ux * 22, b.y - uy * 22, b.x, b.y);
+    g.fillStyle(C('#efdcff'), 1).fillRect(b.x - 1, b.y - 1, 2, 2);
+    return;
+  }
   const tail = b.look === 'sniper' ? 22 : b.look === 'shotgun' ? 4 : 7;
   g.lineStyle(b.look === 'sniper' ? 1 : 2, C('#ffcc59'), 0.6).lineBetween(b.x - ux * tail, b.y - uy * tail, b.x, b.y);
   g.fillStyle(C('#fff2bf'), 1).fillRect(b.x - 1, b.y - 1, 2, 2);
@@ -1829,6 +1980,15 @@ function drawBackWall(g, c) {
 }
 
 // Scaffolding under a platform: poles down to the nearest surface below, with X braces.
+// A wooden deck (thin platforms): boards with a bright top edge, seams, a dark underside.
+function woodDeck(g, x, y, w) {
+  g.fillStyle(C('#3d2a1a'), 1).fillRect(x, y, w, 5);
+  g.fillStyle(C('#8c6a44'), 1).fillRect(x, y, w, 3);
+  g.fillStyle(C('#c79a62'), 1).fillRect(x, y, w, 1);
+  g.fillStyle(C('#5c4128'), 1);
+  for (let px = x + 12; px < x + w; px += 14) g.fillRect(px, y, 1, 4);
+}
+
 function drawScaffold(g, st, b) {
   const floorBelow = (x) => {
     let best = b.y + 160;
@@ -1989,14 +2149,15 @@ function drawBlocks(g, st, kitFacades = new Set()) {
   for (const b of st.blocks) if (b.look === 'scaffold') drawScaffold(g, st, b);
   for (const b of st.blocks) {
     const { x, y, w, h } = b;
-    if (VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look)) continue;
+    if (VILLAGE_LOOKS.has(b.look) || DUNGEON_LOOKS.has(b.look) || NIGHT_LOOKS.has(b.look)) continue;
+    // (Thin platforms are wood, on every stage; solid ones stone, concrete or metal.)
     if (b.look === 'balcony') {
-      // Metal balcony: a railing behind you, the floor, and brackets under it.
+      // Balcony: a metal railing behind you, a wooden deck, metal brackets under it.
       g.fillStyle(C('#4a5570'), 1).fillRect(x, y - 12, w, 2);
       for (let rx = x; rx <= x + w - 2; rx += 6) g.fillRect(rx, y - 12, 1, 12);
-      g.fillStyle(C('#7c86ad'), 1).fillRect(x, y, w, 3);
-      g.fillStyle(C('#3a4062'), 1).fillRect(x, y + 3, w, 3);
-      for (let bx = x + 8; bx < x + w; bx += 40) g.fillTriangle(bx, y + 6, bx + 8, y + 6, bx, y + 14);
+      woodDeck(g, x, y, w);
+      g.fillStyle(C('#3a4062'), 1);
+      for (let bx = x + 8; bx < x + w; bx += 40) g.fillTriangle(bx, y + 5, bx + 8, y + 5, bx, y + 13);
     } else if (b.look === 'scaffold') {
       // Wooden planks on a metal frame.
       g.fillStyle(C('#8c6a44'), 1).fillRect(x, y, w, 4);
@@ -2004,8 +2165,7 @@ function drawBlocks(g, st, kitFacades = new Set()) {
       for (let px = x + 10; px < x + w; px += 12) g.fillRect(px, y, 1, 4);
       g.fillStyle(C('#56657a'), 1).fillRect(x, y + 4, w, 2);
     } else if (b.oneWay) {
-      g.fillStyle(C('#8a93b8'), 1).fillRect(x, y, w, 4);
-      g.fillStyle(C('#4b5275'), 1).fillRect(x, y + 4, w, 2);
+      woodDeck(g, x, y, w);
       g.fillStyle(C('#3a4062'), 1);
       for (let sx = x + 6; sx < x + w; sx += 16) g.fillRect(sx, y + 4, 2, 6);
     } else if (b.look === 'metal') {

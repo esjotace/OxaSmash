@@ -10,12 +10,16 @@
 //   pad0..3  a controller each: left stick moves, right stick aims, buttons from the settings.
 import { bump, NEUTRAL } from '../sim/input.js';
 import { aimOrigin, gunOrigin } from '../sim/world.js';
-import { settings, padBindings, ui, keyName, padButtonName, padStyle, firstPad } from './settings.js';
+import { settings, padBindings, ui, keyName, padActionName, padStyle, firstPad } from './settings.js';
 import { hasIcon } from './padicons.js';
 
 const ACTIONS = ['left', 'right', 'up', 'down', 'jump', 'shoot', 'melee', 'jab', 'dodge', 'cycle', 'block', 'reload', 'hide', 'pickup', 'grenade'];
 const COUNTERS = { jump: 'jp', shoot: 'sp', melee: 'mp', jab: 'kp', dodge: 'xp', cycle: 'cp', down: 'dp', reload: 'rp', hide: 'hp', pickup: 'ep', grenade: 'gp' };
 const STICK = 0.35; // stick dead zone
+// Melee and shoot pressed together (both triggers, by default) is a grenade: hold to cook and aim,
+// let go of either to throw. A trigger pressed alone waits this long (ms) for the other before it
+// counts as a shot or a swing.
+const GRENADE_CHORD = 50;
 const PAD_AIM_DISTANCE = 110; // where the crosshair sits along a controller's aim (px)
 
 export class Controls {
@@ -37,6 +41,10 @@ export class Controls {
     this.mouseGrenade = false;
     this.mouseShoot = false;
     this.padHeld = {}; // controller actions held last tick (for presses)
+    // The triggers, for the grenade: 'free', 'wait' (one down, since chordAt), 'grenade', 'after'
+    // (thrown: the triggers do nothing until both are up) or 'alone' (a shot or swing).
+    this.chord = 'free';
+    this.chordAt = 0;
     this.padAim = null; // the right stick's direction, when pushed
     this.padUsedAt = -Infinity; // when the controller was last touched (ms)
     this.menuPressed = false; // the controller's menu button (MatchScene opens the menu)
@@ -147,6 +155,7 @@ export class Controls {
     const held = {};
     // (Each controller slot has its own button layout.)
     for (const [action, button] of Object.entries(padBindings(`pad${this.pad}`))) held[action] = pressed(button);
+    this.grenadeChord(held);
     const [lx = 0, ly = 0, rx = 0, ry = 0] = gp.axes;
     held.down ||= ly > 0.6;
     // (Up, for DI: the stick pushed up, or whatever's bound to hide, the D-pad's up by default.)
@@ -192,7 +201,7 @@ export class Controls {
   // otherwise the first key bound to it.
   buttonName(action) {
     if (this.pad >= 0 && (!this.mouse || this.usingPad())) {
-      return padButtonName(padBindings(`pad${this.pad}`)[action], this.gamepad());
+      return padActionName(padBindings(`pad${this.pad}`), action, this.gamepad());
     }
     const key = settings.keys[action]?.[0];
     return key === undefined ? '?' : keyName(key);
@@ -227,6 +236,31 @@ export class Controls {
     if (!this.mouse) return null;
     const c = this.pointer();
     return this.scene.cameras.main.getWorldPoint(c.x, c.y);
+  }
+
+  // Melee + shoot together → a grenade (see GRENADE_CHORD). Changes held in place.
+  grenadeChord(held) {
+    const m = held.melee;
+    const s = held.shoot;
+    const now = performance.now();
+    if (this.chord === 'grenade' && !(m && s)) this.chord = 'after';
+    if (this.chord === 'after' && !m && !s) this.chord = 'free';
+    if (this.chord === 'alone' && !m && !s) this.chord = 'free';
+    if (this.chord === 'free' && (m || s)) {
+      this.chord = 'wait';
+      this.chordAt = now;
+    }
+    if (this.chord === 'wait') {
+      if (m && s) this.chord = 'grenade';
+      else if (!m && !s) {
+        // (A tap shorter than the wait: still a tap.)
+        this.counts[this.lastAlone === 'melee' ? 'mp' : 'sp'] = bump(this.counts[this.lastAlone === 'melee' ? 'mp' : 'sp']);
+        this.chord = 'free';
+      } else if (now - this.chordAt >= GRENADE_CHORD) this.chord = 'alone';
+      else this.lastAlone = m ? 'melee' : 'shoot';
+    }
+    if (this.chord === 'grenade') held.grenade = true;
+    if (this.chord !== 'alone') held.melee = held.shoot = false;
   }
 
   // me: this player's fighter as last drawn, used to aim.

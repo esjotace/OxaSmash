@@ -57,11 +57,15 @@ export const PAD_ACTIONS = [
   ['cycle', 'Next grenade'],
   ['menu', 'Menu'],
 ];
-// (Block on the top face button, pick up on the D-pad's down; crouching is also always the left
-// stick pushed down, so its button sits on the D-pad's left. L jabs.)
-export const DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, block: 3, jab: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, pickup: 13, down: 14, cycle: 15 };
-// The layout the game used to start with: a saved layout still exactly like it moves to the new one.
-const OLD_DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, pickup: 3, block: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, down: 13, cycle: 15 };
+// (Pick up on the top face button, block on R, L jabs. The grenade has no button of its own:
+// both triggers at once, melee + shoot (see GRENADE_CHORD in controls.js); -1 is "no button".)
+export const DEFAULT_PAD = { jump: 0, dodge: 1, reload: 2, pickup: 3, jab: 4, block: 5, melee: 6, shoot: 7, menu: 9, hide: 12, down: 13, cycle: 15, grenade: -1 };
+// The layouts the game used to start with: a saved layout still exactly like one of them moves to
+// the new one.
+const OLD_DEFAULT_PADS = [
+  { jump: 0, dodge: 1, reload: 2, pickup: 3, block: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, down: 13, cycle: 15 },
+  { jump: 0, dodge: 1, reload: 2, block: 3, jab: 4, grenade: 5, melee: 6, shoot: 7, menu: 9, hide: 12, pickup: 13, down: 14, cycle: 15 },
+];
 // What kind of controller this is, for button names and pictures: 'switch', 'ps' or 'xbox' (also
 // the default). Read from its id: the vendor (057e Nintendo, 054c Sony) or its name.
 export function padStyle(gp) {
@@ -82,7 +86,10 @@ export const PAD_NAMES = {
 };
 // A button's name on a controller (gp: its Gamepad, or null: the Xbox names). A layout that isn't
 // "standard" doesn't say what its buttons are, so they're just numbered.
-export const padButtonName = (button, gp = null) => (gp && gp.mapping !== 'standard' ? `Button ${button}` : PAD_NAMES[padStyle(gp)][button] ?? `Button ${button}`);
+export const padButtonName = (button, gp = null) => (!(button >= 0) ? '—' : gp && gp.mapping !== 'standard' ? `Button ${button}` : PAD_NAMES[padStyle(gp)][button] ?? `Button ${button}`);
+// An action's button(s) in a layout: the grenade, with no button of its own, is both triggers.
+export const padActionName = (layout, action, gp = null) =>
+  action === 'grenade' && !(layout.grenade >= 0) ? `${padButtonName(layout.melee, gp)} + ${padButtonName(layout.shoot, gp)}` : padButtonName(layout[action], gp);
 
 // The devices that keep personal settings: keyboard + mouse, and controller slots 1-4.
 export const DEVICE_SLOTS = ['kbm', 'pad0', 'pad1', 'pad2', 'pad3'];
@@ -100,7 +107,7 @@ function load() {
     const d = saved.devices?.[slot] ?? {};
     devices[slot] = { character: typeof d.character === 'string' ? d.character : null };
     if (slot !== 'kbm') {
-      const same = d.pad && Object.entries(OLD_DEFAULT_PAD).every(([k, v]) => d.pad[k] === v);
+      const same = d.pad && OLD_DEFAULT_PADS.some((old) => Object.entries(old).every(([k, v]) => d.pad[k] === v));
       devices[slot].pad = same ? { ...DEFAULT_PAD } : { ...DEFAULT_PAD, ...d.pad };
     }
   }

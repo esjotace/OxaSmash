@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin } from '../src/sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../src/sim/input.js';
-import { MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
+import { CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
 import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS } from '../src/sim/constants.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { STAGES, getStage } from '../src/sim/stage.js';
@@ -129,6 +129,35 @@ describe('dash and stamina', () => {
     f.facing = 1;
     step(w, [dash(0)]);
     expect(f.vx).toBeLessThan(-DASH.speed * 0.9);
+  });
+
+  it('DI: holding up or down tilts the dash (on the ground, only up)', () => {
+    const tilt = (DASH.di * Math.PI) / 180;
+    // In the air, up and down.
+    for (const [hold, sign] of [[{ up: true }, -1], [{ down: true }, 1]]) {
+      const w = world();
+      const f = w.fighters[0];
+      place(f, 650, -200);
+      f.grounded = false;
+      step(w, [{ ...dash(1), ...hold }]);
+      expect(f.vx).toBeCloseTo(DASH.speed * Math.cos(tilt), 0);
+      expect(Math.sign(f.vy)).toBe(sign);
+    }
+    // On the ground: up hops off it; down just dashes flat.
+    let w = world();
+    let f = w.fighters[0];
+    place(f, 650, -2);
+    run(w, 10);
+    step(w, [{ ...dash(1), up: true }]);
+    expect(f.vy).toBeLessThan(0);
+    expect(f.grounded).toBe(false);
+    w = world();
+    f = w.fighters[0];
+    place(f, 650, -2);
+    run(w, 10);
+    step(w, [{ ...dash(1), down: true, crouch: true }]);
+    expect(f.vx).toBeCloseTo(DASH.speed, 0);
+    expect(f.vy).toBeGreaterThanOrEqual(0);
   });
 
   it('a full bar is two dashes; then wait for it to refill', () => {
@@ -271,8 +300,8 @@ describe('attacking on the run', () => {
 });
 
 describe('ammo', () => {
-  it('every gun holds one spare magazine (the Golden Gun: its three bullets are all there is)', () => {
-    for (const g of Object.values(GUNS)) expect(g.magazines, g.name).toBe(g === GUNS.golden ? 1 : 2);
+  it('every gun holds one spare magazine (the Golden Gun and The Snoozer: what they hold is all there is)', () => {
+    for (const g of Object.values(GUNS)) expect(g.magazines, g.name).toBe(g === GUNS.golden || g === GUNS.snoozer ? 1 : 2);
   });
 });
 
@@ -1174,7 +1203,7 @@ describe('melee quirks', () => {
     expect(axe.b.damage).toBe(MELEE.axe.damage);
   });
 
-  it('the shovel launches straight up, the bat sends you flying flat', () => {
+  it('the shovel launches straight up, the club sends you flying flat', () => {
     const up = armed('shovel');
     up.b.damage = 100;
     let vy = 0;
@@ -1184,7 +1213,7 @@ describe('melee quirks', () => {
       if (up.b.vy < vy) [vy, vxUp] = [up.b.vy, up.b.vx];
     }
     expect(-vy).toBeGreaterThan(Math.abs(vxUp) * 3);
-    const flat = armed('bat');
+    const flat = armed('club');
     flat.b.damage = 100;
     let vx = 0;
     let vyFlat = 0;
@@ -1426,7 +1455,7 @@ describe('random stages', () => {
   const ids = Array.from({ length: 40 }, (_, k) => `mixed-${k * 7919 + 1}`);
   const many = Array.from({ length: 400 }, (_, k) => `mixed-${k * 104729 + 3}`);
   const onFloor = (st, p) => st.blocks.some((b) => Math.abs(b.y - p.y) < 1 && p.x >= b.x && p.x <= b.x + b.w);
-  const ROUGH = ['pitfall', 'cage', 'spikes', 'chasm', 'drawbridge', 'crumble', 'stickyCrumble'];
+  const ROUGH = ['cage', 'spikes', 'chasm', 'drawbridge', 'crumble', 'stickyCrumble'];
   // A stage with the given lower section, that section, and the movers in it.
   function find(lower) {
     for (const id of many) {
@@ -1452,16 +1481,19 @@ describe('random stages', () => {
 
   it('every section turns up somewhere', () => {
     const seen = new Set(many.flatMap((id) => getStage(id).sections.flatMap((s) => [s.lower, s.upper])));
-    for (const name of ['hall', 'gallery', 'ledges', 'rampart', 'pitfall', 'cage', 'spikes', 'chasm', 'drawbridge', 'crypt', 'crusher', 'towers', 'shrine', 'cellar', 'crumble', 'lift', 'ice', 'stickyCrumble', 'glueTrap', 'glueHall']) expect(seen).toContain(name);
+    for (const name of ['hall', 'gallery', 'ledges', 'rampart', 'arena', 'cage', 'spikes', 'chasm', 'drawbridge', 'crypt', 'crusher', 'towers', 'shrine', 'cellar', 'crumble', 'lift', 'ice', 'stickyCrumble', 'glueTrap', 'glueHall']) expect(seen).toContain(name);
     for (const name of ['open', 'stairs', 'walkway', 'balcony', 'perch', 'rafters']) expect(seen).toContain(name);
+    for (const name of ['destination', 'destinationCover', 'battlefield', 'battlefieldCover']) expect(seen).toContain(name);
   });
 
-  it('have exactly one pitfall (never at either end), at most one cage and shrine, and no two rough sections side by side', () => {
+  it('have exactly one arena (3 sections, never at either end, no rough section beside it), at most one cage and shrine, and no two rough sections side by side', () => {
     for (const id of many) {
       const secs = getStage(id).sections;
       const count = (name) => secs.filter((s) => s.lower === name).length;
-      expect(count('pitfall'), id).toBe(1);
-      expect(secs[0].lower === 'pitfall' || secs[secs.length - 1].lower === 'pitfall', id).toBe(false);
+      expect(count('arena'), id).toBe(3);
+      const at = secs.findIndex((s) => s.lower === 'arena');
+      expect(at > 0 && at + 3 < secs.length, id).toBe(true);
+      expect(ROUGH.includes(secs[at - 1].lower) || ROUGH.includes(secs[at + 3].lower), id).toBe(false);
       expect(count('cage'), id).toBeLessThanOrEqual(1);
       expect(count('shrine'), id).toBeLessThanOrEqual(1);
       for (let i = 1; i < secs.length; i++) expect(ROUGH.includes(secs[i - 1].lower) && ROUGH.includes(secs[i].lower), `${id} at ${i}`).toBe(false);
@@ -1494,27 +1526,12 @@ describe('random stages', () => {
     for (const id of many) for (const sec of getStage(id).sections) if (sec.upper === 'rafters') expect(['spikes', 'crypt', 'crusher', 'towers', 'lift', 'glueTrap'], id).toContain(sec.lower);
   });
 
-  it('let the storm end over a pitfall or drawbridge only with footing above, and in the cage only without a hard roof', () => {
-    for (const id of many) {
-      for (const sec of getStage(id).sections) {
-        if (sec.lower === 'pitfall' || sec.lower === 'drawbridge') expect(sec.final, id).toBe(sec.upper !== 'open');
-        else if (sec.lower === 'cage') expect(sec.final, id).toBe(!['walkway', 'perch'].includes(sec.upper));
-        else expect(sec.final, id).toBe(true);
-      }
-    }
-  });
-
-  it('the storm closes on whole sections, and ends only where the stage allows', () => {
+  it("the storm always closes on the arena: its slab is the last ground", () => {
     for (const id of ids) {
-      for (let seed = 1; seed <= 5; seed++) {
-        const w = createWorld({ stage: id, players: 2, countdown: 0, seed });
-        const secs = getStage(id).sections;
-        const s = w.storm;
-        const k = secs.findIndex((sec) => s.zone2[0] < sec.right && s.zone2[1] > sec.left);
-        expect(secs[k].final, id).toBe(true);
-        expect(s.zone2[1] - s.zone2[0]).toBeLessThanOrEqual(256);
-        expect(s.zone1[0] <= s.zone2[0] && s.zone1[1] >= s.zone2[1]).toBe(true);
-      }
+      const st = getStage(id);
+      const s = createWorld({ stage: id, players: 2, countdown: 0, seed: 3 }).storm;
+      expect(s.zone2).toEqual([st.arena.left, st.arena.right]);
+      expect(s.zone1[0] <= s.zone2[0] && s.zone1[1] >= s.zone2[1]).toBe(true);
     }
   });
 
@@ -1534,10 +1551,10 @@ describe('random stages', () => {
     expect(f.y).toBe(0);
   });
 
-  it('falling into the pitfall costs a life', () => {
-    const { sec, world: w } = find('pitfall');
+  it("falling into one of the arena's pits costs a life", () => {
+    const { st, world: w } = find('arena');
     const f = w.fighters[0];
-    place(f, sec.left + 76, -10);
+    place(f, st.arena.left - 48, -10);
     run(w, 120);
     expect(f.stocks).toBe(2);
   });
@@ -1805,10 +1822,10 @@ describe('kitchen, farm and toolbox weapons', () => {
 
   it('the pliers yoink the weapon in their hand and drop it behind you', () => {
     const { w, b } = armed('pliers', 12);
-    Object.assign(b, { melee: 'bat', active: 'melee' });
+    Object.assign(b, { melee: 'club', active: 'melee' });
     swing(w, 20);
     expect(b.melee).toBe(null);
-    const dropped = w.pickups.find((p) => p.weapon === 'bat');
+    const dropped = w.pickups.find((p) => p.weapon === 'club');
     expect(dropped).toBeTruthy();
     expect(dropped.x).toBeLessThan(600);
     // Next yoink: their gun.
@@ -1906,26 +1923,26 @@ describe('wind-ups, throws and the crusher', () => {
     for (let t = 0; t < ticks; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, ...input }, NEUTRAL]);
   };
 
-  it('the bat: a tap is light, a full wind-up launches harder than the old home run, at 45°', () => {
-    let { w, b } = armed('bat');
+  it('the club: a tap is light, a full wind-up launches harder than the flat launch, at 45°', () => {
+    let { w, b } = armed('club');
     b.damage = 100;
     go(w, 30);
     const tap = Math.hypot(b.vx, b.vy);
     expect(tap).toBeLessThan(250);
-    ({ w, b } = armed('bat'));
+    ({ w, b } = armed('club'));
     b.damage = 100;
     go(w, 80, { meleeHeld: true });
     go(w, 12);
-    // Harder than the 90% (the old home run), going up as much as out.
-    const old = MELEE.bat.power;
+    // Harder than the 90% (the flat launch), going up as much as out.
+    const old = MELEE.club.power;
     expect(Math.hypot(b.vx, b.vy)).toBeGreaterThan(old.knockback + old.knockbackGrowth * b.damage);
     expect(-b.vy).toBeGreaterThan(Math.abs(b.vx) * 0.7);
   });
 
-  it('winding up the bat slows you, to 10% when full', () => {
-    const { w, a } = armed('bat', 300);
+  it('winding up the club slows you, to 10% when full', () => {
+    const { w, a } = armed('club', 300);
     for (let t = 0; t < 100; t++) step(w, [{ ...NEUTRAL, mx: 1, mp: 1, meleeHeld: true }, NEUTRAL]);
-    expect(a.vx).toBeCloseTo(FIGHTER.runSpeed * MELEE.bat.power.slow, 0);
+    expect(a.vx).toBeCloseTo(FIGHTER.runSpeed * MELEE.club.power.slow, 0);
   });
 
   it('the katana swings on the click, and holding on throws it', () => {
@@ -1951,8 +1968,9 @@ describe('wind-ups, throws and the crusher', () => {
   });
 
   it('the crusher: its spikes hurt while it waits, and it launches hard when it lands on you', () => {
-    // (mixed-1 has a crusher.)
-    let w = createWorld({ stage: 'mixed-1', players: 1, countdown: 0, seed: 3, storm: FAR_STORM });
+    // (A random dungeon with a crusher.)
+    const stage = [...Array(300).keys()].map((s) => `mixed-${s}`).find((id) => getStage(id).movers.some((m) => m.kind === 'crusher'));
+    let w = createWorld({ stage, players: 1, countdown: 0, seed: 3, storm: FAR_STORM });
     const st = getStage(w.stage);
     const i = st.movers.findIndex((m) => m.kind === 'crusher');
     const def = st.movers[i];
@@ -1963,7 +1981,7 @@ describe('wind-ups, throws and the crusher', () => {
     step(w, [NEUTRAL]);
     expect(f.damage).toBe(SPIKES.damage);
     // Slamming down onto you: a big launch.
-    w = createWorld({ stage: 'mixed-1', players: 1, countdown: 0, seed: 3, storm: FAR_STORM });
+    w = createWorld({ stage, players: 1, countdown: 0, seed: 3, storm: FAR_STORM });
     f = w.fighters[0];
     let fastest = 0;
     for (let t = 0; t < 600 && f.damage === 0; t++) {
@@ -2286,7 +2304,7 @@ describe('items', () => {
       place(w.fighters[0], 600, -2);
       place(w.fighters[1], 614, -2);
       run(w, 3);
-      Object.assign(w.fighters[0], { melee: 'bat', active: 'melee' });
+      Object.assign(w.fighters[0], { melee: 'club', active: 'melee' });
       w.fighters[1].damage = 50;
       for (let t = 0; t < 12; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
     }
@@ -2667,7 +2685,7 @@ describe('DI', () => {
       place(a, 600, -2);
       place(b, 614, -2);
       run(w, 5);
-      Object.assign(a, { melee: 'bat', active: 'melee' });
+      Object.assign(a, { melee: 'club', active: 'melee' });
       b.facing = -1;
       b.damage = 80;
       let angle = null;
@@ -2879,5 +2897,252 @@ describe('bots and pits', () => {
       for (let t = 0; t < 60 * 8 && a.y > -1; t++) step(w, [botInput(w, 0, bot), NEUTRAL]);
       expect(a.y).toBeLessThan(0);
     }
+  });
+});
+
+describe('crumbling floors', () => {
+  it("caught under a tile when it comes back, you jump up through it (it's thin), not trapped", () => {
+    const stage = [...Array(400).keys()].map((s) => `mixed-${s}`).find((id) => getStage(id).sections.some((c) => c.lower === 'crumble' || c.lower === 'stickyCrumble'));
+    const w = createWorld({ stage, players: 2, countdown: 0, seed: 1, storm: FAR_STORM });
+    const tile = getStage(stage).movers.find((m) => m.kind === 'crumble');
+    const f = w.fighters[0];
+    // Just under the tile (between it and the spikes), the tile back in place above.
+    place(f, tile.x + tile.w / 2, tile.y + tile.h + 14);
+    f.grounded = true;
+    step(w, [{ ...NEUTRAL, jump: true, jp: 1 }, NEUTRAL]);
+    for (let t = 0; t < 40; t++) step(w, [{ ...NEUTRAL, jump: true, jp: 1 }, NEUTRAL]);
+    // (Up through it, standing on top.)
+    expect(f.y).toBeLessThanOrEqual(tile.y);
+  });
+});
+
+describe('sleep and drowsiness', () => {
+  const T = (s) => Math.round(s * 60);
+
+  it('The Snoozer puts whoever it hits to sleep: no control, and any hit wakes them', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 700, -2);
+    run(w, 10);
+    Object.assign(a, { gun: 'snoozer', hasGun: true, ammo: 1, spareMags: 0, active: 'gun' });
+    w.rng = () => 0.5;
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+    run(w, 5);
+    expect(b.sleep).toBeGreaterThan(0);
+    expect(b.damage).toBeGreaterThan(0);
+    // Asleep: holding right does nothing.
+    const x = b.x;
+    run(w, 30, () => [NEUTRAL, { ...NEUTRAL, mx: 1 }]);
+    expect(b.x).toBeCloseTo(x, 0);
+    // A hit wakes them (and lands).
+    Object.assign(a, { gun: 'revolver', ammo: 6, fireCd: 0 });
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 2 }, NEUTRAL]);
+    run(w, 5);
+    expect(b.sleep).toBe(0);
+  });
+
+  it('left alone, sleep wears off after SLEEP.time', () => {
+    const w = world();
+    const b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.sleep = SLEEP.time;
+    run(w, T(SLEEP.time) + 2);
+    expect(b.sleep).toBe(0);
+    expect(b.rested).toBeGreaterThan(0);
+  });
+
+  it('the drowsy gas: standing still, you fall asleep after DROWSY.time, slowed till then', () => {
+    const w = world();
+    const b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    w.clouds.push({ id: 99, kind: 'drowsy', x: 700, y: -14, r: 70, t: 1, by: 0 });
+    run(w, 1);
+    expect(b.drowsy).toBeGreaterThan(0);
+    run(w, T(DROWSY.time) + 2);
+    expect(b.sleep).toBeGreaterThan(0);
+  });
+
+  it('drowsy: walking it off does nothing; jerky moves shake it off; damage clears it too', () => {
+    let w = world();
+    let b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.drowsy = DROWSY.time;
+    run(w, T(DROWSY.time) - 5, () => [NEUTRAL, { ...NEUTRAL, mx: 1 }]);
+    expect(b.shake).toBeCloseTo(DROWSY.shake.turn, 5); // (setting off counts once; walking on, nothing)
+    w = world();
+    b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.drowsy = DROWSY.time;
+    // Wiggling left and right (a turn every 4 ticks), with a jump now and then.
+    run(w, T(DROWSY.time) - 5, (t) => [NEUTRAL, { ...NEUTRAL, mx: Math.floor(t / 4) % 2 ? -1 : 1, jp: Math.floor(t / 30) }]);
+    expect(b.drowsy).toBe(0);
+    expect(b.sleep).toBe(0);
+    w = world();
+    const [a] = w.fighters;
+    b = w.fighters[1];
+    place(a, 600, -2);
+    place(b, 700, -2);
+    run(w, 10);
+    b.drowsy = DROWSY.time;
+    Object.assign(a, { gun: 'pistol', hasGun: true, ammo: 10, active: 'gun' });
+    w.rng = () => 0.5;
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+    run(w, 5);
+    expect(b.damage).toBeGreaterThan(0);
+    expect(b.drowsy).toBe(0);
+  });
+
+  it('drowsy runs at DROWSY.slow less', () => {
+    const w = world();
+    const f = w.fighters[0];
+    place(f, 600, -2);
+    run(w, 10);
+    f.drowsy = 99;
+    f.shake = -99; // (no shaking it off here)
+    run(w, 60, () => [{ ...NEUTRAL, mx: 1 }]);
+    expect(f.vx).toBeCloseTo(FIGHTER.runSpeed * (1 - DROWSY.slow), 0);
+  });
+});
+
+describe('the Ring of Cat and the polymorph potion', () => {
+  function withRing() {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 800, -2);
+    run(w, 10);
+    spawnWeapon(w, 0, 'catring');
+    run(w, 30);
+    // (Presses are counts: ep stays 1 after, or letting go would be another press.)
+    step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]); // pick it up
+    run(w, 2, () => [{ ...NEUTRAL, ep: 1 }]);
+    return { w, a, b };
+  }
+
+  it('the ring: 7 uses; the grenade button turns you into a cat, and back', () => {
+    const { w, a } = withRing();
+    expect(a.ring).toBe(CAT.uses);
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 1 }, NEUTRAL]);
+    expect(a.cat).toBeGreaterThan(0);
+    expect(a.ring).toBe(CAT.uses - 1);
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 2 }, NEUTRAL]);
+    expect(a.cat).toBe(0);
+    expect(a.ring).toBe(CAT.uses - 1);
+  });
+
+  it('a cat runs twice as fast; any attack turns it back (and the attack comes out)', () => {
+    const { w, a } = withRing();
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 1 }, NEUTRAL]);
+    let top = 0;
+    run(w, 60, () => {
+      top = Math.max(top, a.vx);
+      return [{ ...NEUTRAL, mx: 1, ep: 1, gp: 1 }];
+    });
+    expect(top).toBeCloseTo(FIGHTER.runSpeed * CAT.speed, 0);
+    expect(a.cat).toBeGreaterThan(0);
+    w.rng = () => 0.5;
+    const ammo = a.ammo;
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 1, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+    expect(a.cat).toBe(0);
+    expect(a.ammo).toBe(ammo - 1); // (the shot went off)
+  });
+
+  it('a cat turns back after CAT.breakAt % of damage, or a status; drowsy just makes it lie down', () => {
+    const { w, a } = withRing();
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 1 }, NEUTRAL]);
+    a.invincible = 0;
+    a.damage = 0;
+    w.clouds.push({ id: 98, kind: 'poison', x: a.x, y: a.y - 14, r: 30, t: 99, by: 1 });
+    run(w, 30, () => [{ ...NEUTRAL, ep: 1, gp: 1 }]);
+    expect(a.cat).toBeGreaterThan(0); // (a little poison: still a cat)
+    run(w, 180, () => [{ ...NEUTRAL, ep: 1, gp: 1 }]);
+    expect(a.cat).toBe(0);
+    w.clouds.length = 0;
+    step(w, [{ ...NEUTRAL, ep: 1, gp: 2 }, NEUTRAL]);
+    expect(a.cat).toBeGreaterThan(0);
+    a.drowsy = 1;
+    run(w, 70, () => [{ ...NEUTRAL, ep: 1, gp: 2 }]);
+    expect(a.sleep).toBeGreaterThan(0);
+    expect(a.cat).toBeGreaterThan(0);
+    a.burn = 1;
+    run(w, 1, () => [{ ...NEUTRAL, ep: 1, gp: 2 }]);
+    expect(a.cat).toBe(0);
+  });
+
+  it('the ring takes both grenade slots; a grenade picked up takes its place', () => {
+    const w = world();
+    const a = w.fighters[0];
+    place(a, 600, -2);
+    run(w, 10);
+    a.grenades = ['frag', 'smoke'];
+    spawnWeapon(w, 0, 'catring');
+    run(w, 30);
+    step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]);
+    expect(a.ring).toBe(CAT.uses);
+    expect(a.grenades).toEqual([]);
+    spawnWeapon(w, 0, 'frag');
+    run(w, 30, () => [{ ...NEUTRAL, ep: 1 }]);
+    step(w, [{ ...NEUTRAL, ep: 2 }, NEUTRAL]);
+    expect(a.ring).toBe(0);
+    expect(a.grenades).toEqual(['frag']);
+  });
+
+  it('the polymorph potion turns everyone near into an animal: no attacks; damage turns them back', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 640, -2);
+    run(w, 10);
+    Object.assign(b, { invincible: 0, gun: 'pistol', hasGun: true, ammo: 10, active: 'gun' });
+    w.grenades.push({ id: 50, owner: 0, kind: 'polymorph', x: 640, y: -12, vx: 0, vy: 0, fuse: 0.01, on: -1, stuck: false });
+    run(w, 3);
+    expect(b.animal).toBeGreaterThanOrEqual(0);
+    expect(ANIMALS[b.animal]).toBeTruthy();
+    step(w, [NEUTRAL, { ...NEUTRAL, ax: -1, ay: 0, sp: 1 }]);
+    expect(w.bullets.some((x) => x.owner === 1)).toBe(false);
+    Object.assign(a, { gun: 'pistol', hasGun: true, ammo: 10, active: 'gun', animal: -1 });
+    w.rng = () => 0.5;
+    // (Aimed low: an animal is small.)
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0.3, sp: 1 }, NEUTRAL]);
+    run(w, 5);
+    expect(b.animal).toBe(-1);
+  });
+
+  it('an animal turns back on its own after a while', () => {
+    const w = world();
+    const b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    Object.assign(b, { animal: 3, animalT: GRENADES.polymorph.polymorph.time });
+    run(w, Math.round(GRENADES.polymorph.polymorph.time * 60) + 2);
+    expect(b.animal).toBe(-1);
+  });
+});
+
+describe('waking up early', () => {
+  it('mashing moves wakes a sleeper, but not before SLEEP.min; doing nothing, SLEEP.time', () => {
+    const T = (s) => Math.round(s * 60);
+    const mash = (t) => [NEUTRAL, { ...NEUTRAL, mx: Math.floor(t / 3) % 2 ? -1 : 1, jp: Math.floor(t / 20), xp: Math.floor(t / 25), dp: Math.floor(t / 30) }];
+    let w = world();
+    let b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.sleep = SLEEP.time;
+    run(w, T(SLEEP.min) - 3, mash);
+    expect(b.sleep).toBeGreaterThan(0); // (full meter or not: not yet)
+    run(w, 6, (t) => mash(t + T(SLEEP.min)));
+    expect(b.sleep).toBe(0);
+    w = world();
+    b = w.fighters[1];
+    place(b, 700, -2);
+    run(w, 10);
+    b.sleep = SLEEP.time;
+    run(w, T(SLEEP.time) - 3);
+    expect(b.sleep).toBeGreaterThan(0);
   });
 });

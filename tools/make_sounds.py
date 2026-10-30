@@ -139,7 +139,7 @@ RECIPES = {
         sweep(130, 38, 0.25, 0.5) * env(0.25, 0.001, 0.08) * 1.4,
         noise(0.01) * 0.9,
     ), 2.2),
-    # A critical hit (the full bat, the keyboard's big phrase): a home-run crack. A sharp wooden
+    # A critical hit (the full club, the keyboard's big phrase): a big crack. A sharp wooden
     # crack, a bright metallic PING ringing out, a deep thump, and echoes.
     "critical": lambda: (lambda x: mix(x, at(0.11, x * 0.35), at(0.23, x * 0.15)))(drive(mix(
         svf(noise(0.05), 3800, 0.9, "bp") * env(0.05, 0.0005, 0.01) * 2.5,

@@ -2,7 +2,7 @@
 // Priorities: get back on stage > get out of the storm > fight the nearest enemy. Ported from Godot.
 import { getStage } from '../sim/stage.js';
 import { bump } from '../sim/input.js';
-import { DT, FIGHTER, GUNS, GRENADES, GRENADE, GUN_THROW } from '../sim/constants.js';
+import { DT, FIGHTER, GUNS, GRENADES, GRENADE, GUN_THROW, DASH } from '../sim/constants.js';
 import { center, aimOrigin, gunOrigin, lineOfSight, groundBelow, respawnPoint, solids, mulberry32, sparesOf } from '../sim/world.js';
 
 const LEVELS = {
@@ -85,6 +85,11 @@ export function botInput(world, id, bot) {
     if ((world.pickups ?? []).some((p) => Math.abs(p.x - f.x) <= 14 && Math.abs(p.y - f.y) <= 20 && wants(bot, f, p.weapon))) press('ep');
     if (bot.descend !== null) out.mx = Math.sign(bot.descend - f.x) || 1;
     else if (bot.climb) climb(f, bot, out, press);
+    // Drowsy or asleep: wiggle and hop to shake it off (or wake up sooner).
+    if (f.drowsy > 0 || f.sleep > 0) {
+      out.mx = Math.floor(world.tick / 7) % 2 ? 1 : -1;
+      if (f.grounded && world.tick % 19 === 0) press('jp');
+    }
     recover(world, f, bot, out, press);
     avoidDrops(world, f, bot, out, press);
     unstick(f, bot, out, press);
@@ -270,9 +275,11 @@ function openColumn(world, f, top, dir) {
   const s = world.storm;
   const inside = (x) => x > (s.wallLeft ?? -Infinity) + 8 && x < (s.wallRight ?? Infinity) - 8;
   const clear = (x) => [-FIGHTER.w / 2 + 1, FIGHTER.w / 2 - 1].every((o) => lineOfSight(world, x + o, f.y - FIGHTER.h - 1, x + o, top - FIGHTER.h));
+  // (And the floor up there starts right beside it, the way we'll steer: not across a pit.)
+  const landing = (x) => [0, 12, 24, 36].some((k) => groundBelow(world, x + dir * k, top - 6, 12));
   for (let d = 0; d <= 160; d += 8) {
     for (const x of d ? [f.x + dir * d, f.x - dir * d] : [f.x]) {
-      if (inside(x) && groundBelow(world, x, f.y - 2, 6) && clear(x)) return x;
+      if (inside(x) && groundBelow(world, x, f.y - 2, 6) && clear(x) && landing(x)) return x;
     }
   }
   return null;
@@ -309,8 +316,14 @@ function groundAhead(world, f, dir) {
 // Off the stage or under it: keep crossing if there's ground ahead, else head for a spawn point.
 function recover(world, f, bot, out, press) {
   if (f.grounded || groundBelow(world, f.x, f.y - 4, 500)) return;
-  if (bot.move !== 0 && groundAhead(world, f, bot.move)) {
-    out.mx = bot.move;
+  // The nearest ground either side (the way we're going, if it's as near): steer for it. (A pit's
+  // far side, or back where we came from.) In the storm, the way out of it, if there's ground that
+  // way in reach, even if there's nearer ground behind.
+  const s = world.storm;
+  const safe = f.x < s.left ? 1 : f.x > s.right ? -1 : 0;
+  const near = safe && groundToward(world, f, safe) ? safe : nearestGround(world, f, bot.move || f.facing);
+  if (near) {
+    out.mx = near;
   } else {
     let best = respawnPoint(world);
     for (const p of getStage(world.stage).spawns) if (Math.abs(p.x - f.x) < Math.abs(best.x - f.x)) best = p;
@@ -319,7 +332,24 @@ function recover(world, f, bot, out, press) {
   if (f.vy > 0 && f.jumpsLeft > 0) {
     press('jp');
     bot.holdJump = 0.3;
+  } else if (near && f.vy > 0 && f.dash <= 0 && f.stamina >= DASH.cost) {
+    // Both jumps gone, still falling: a dash toward the ground (it works in the air).
+    press('xp');
   }
+}
+
+// Is there ground in reach that way (dir: -1, 1) from over a drop?
+const groundToward = (world, f, dir) => [...Array(20).keys()].some((k) => groundBelow(world, f.x + dir * (k + 1) * 16, f.y - 40, 600));
+
+// Which way the nearest ground is from over a drop (-1, 1), searching out to the sides; `prefer`
+// wins a tie. 0: none in reach.
+function nearestGround(world, f, prefer) {
+  for (let k = 16; k <= 320; k += 16) {
+    const ahead = groundBelow(world, f.x + prefer * k, f.y - 40, 600);
+    if (ahead) return prefer;
+    if (groundBelow(world, f.x - prefer * k, f.y - 40, 600)) return -prefer;
+  }
+  return 0;
 }
 
 // Don't walk off a ledge into nothing, unless there's a reason to jump the gap.

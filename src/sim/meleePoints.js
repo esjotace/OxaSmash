@@ -8,7 +8,7 @@ export const MELEE_POINTS = {
   machete: { length: 26.4 },
   nodachi: { length: 39.8 },
   shovel: { length: 20.9 },
-  bat: { length: 27.3 },
+  club: { length: 27.3 },
   cleaver: { length: 14.1 },
   hammer: { length: 24.6 },
   axe: { length: 26.4 },
