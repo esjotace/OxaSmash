@@ -3305,3 +3305,65 @@ describe('low cover that never breaks (lowCover)', () => {
     expect(w.covers.some((c) => c.look === 'ventrock')).toBe(false);
   });
 });
+
+describe('shooting grenades', () => {
+  const setup = () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 400, -2);
+    place(b, 900, -2);
+    run(w, 5);
+    w.barrels.length = 0;
+    return { w, a, b };
+  };
+  const shot = (w, owner) => w.bullets.push({ id: 500, owner, x: 560, y: -16, vx: 900, vy: 0, gravity: 0, life: 1, thrown: false, damage: 8, kb: 150, growth: 1.6 });
+
+  it("a shot sets off someone's grenade lying around, early", () => {
+    const { w } = setup();
+    w.grenades.push({ id: 50, owner: 1, kind: 'frag', x: 640, y: -16, vx: 0, vy: 0, fuse: 3, on: -1, stuck: false, born: w.tick });
+    shot(w, 0);
+    run(w, 10);
+    expect(w.grenades.length).toBe(0);
+    expect(w.bullets.length).toBe(0);
+  });
+
+  it("whoever shot the grenade gets the blame for its blast, not its thrower", () => {
+    const { w, b } = setup();
+    place(b, 720, -2);
+    w.grenades.push({ id: 50, owner: 1, kind: 'frag', x: 650, y: -16, vx: 0, vy: 0, fuse: 3, on: -1, stuck: false, born: w.tick });
+    shot(w, 0);
+    run(w, 30);
+    expect(w.grenades.length).toBe(0);
+    expect(b.damage).toBeGreaterThan(0);
+    expect(b.lastHitBy).toBe(0);
+  });
+
+  it('your own grenade, just thrown, is not set off by your own shot', () => {
+    const { w } = setup();
+    w.grenades.push({ id: 50, owner: 0, kind: 'frag', x: 640, y: -16, vx: 0, vy: 0, fuse: 3, on: -1, stuck: false, born: w.tick });
+    shot(w, 0);
+    run(w, 8);
+    expect(w.grenades.length).toBe(1);
+  });
+
+  it('the banner cannot be shot', () => {
+    const { w } = setup();
+    w.grenades.push({ id: 50, owner: 1, kind: 'banner', x: 640, y: -16, vx: 0, vy: 0, fuse: 6, on: -1, stuck: false, born: w.tick });
+    shot(w, 0);
+    run(w, 10);
+    expect(w.grenades.some((g) => g.kind === 'banner') || w.haven).toBeTruthy();
+  });
+
+  it('charging a gun with the melee weapon out puts the gun in hand', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 800, -2);
+    run(w, 5);
+    w.pickups.push({ id: 99, x: 600, y: 0, weapon: 'railgun' });
+    step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]);
+    a.active = 'melee';
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+    expect(a.active).toBe('gun');
+  });
+});

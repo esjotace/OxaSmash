@@ -49,7 +49,8 @@ export function createBot(level = 'normal', seed = 1) {
     waitSince: null,
     wantJump: false,
     wantDrop: false,
-    mustCross: false,
+    cross: 0, // the way it's worth jumping a gap (toward the target, or out of the storm); 0: neither
+    leap: null, // a gap jump under way: { dir, at } (see leap)
     holdJump: 0,
     fireWait: 0.5 + rng(),
     meleeWait: 0,
@@ -91,6 +92,7 @@ export function botInput(world, id, bot) {
       if (f.grounded && world.tick % 19 === 0) press('jp');
     }
     recover(world, f, bot, out, press);
+    leap(world, f, bot, out, press);
     avoidDrops(world, f, bot, out, press);
     unstick(f, bot, out, press);
     if (!bot.noAttack) attack(world, f, bot, out, press);
@@ -123,7 +125,7 @@ function duck(world, f, bot, out) {
 function decide(world, f, bot) {
   const t = nearestEnemy(world, f);
   bot.target = t ? t.id : -1;
-  bot.mustCross = false;
+  bot.cross = 0;
   // Committed to walking off a ledge: keep going until we're off it.
   if (bot.descend !== null) {
     if (f.grounded) return;
@@ -141,7 +143,7 @@ function decide(world, f, bot) {
   const margin = bot.detour ? -60 : 24;
   if ((!plan || plan.storm) && (f.x < s.left + margin || f.x > s.right - margin)) {
     bot.move = Math.sign((s.left + s.right) / 2 - f.x);
-    bot.mustCross = true;
+    bot.cross = bot.move;
     // (A climb out is kept while its spot is still reachable, for up to 3 s.)
     if (plan && reachable(plan.x) && world.tick - plan.since < 180) bot.climb = plan;
     // Walled in on the way out (the side of a pit): climb out, over toward the safe side.
@@ -224,12 +226,13 @@ function decide(world, f, bot) {
     }
     bot.wantJump = true;
     if (bot.move === 0) bot.move = Math.abs(dx) > 8 ? Math.sign(dx) : r() < 0.5 ? 1 : -1;
-    bot.mustCross = true;
+    bot.cross = bot.move;
     return;
   } else if (dy > 48 && f.grounded && f.onThin) {
     bot.wantDrop = true;
   }
-  bot.mustCross = Math.abs(dx) > 60;
+  // (Only toward them: stepping back while shooting never jumps a gap back the way it came.)
+  bot.cross = Math.abs(dx) > 60 ? Math.sign(dx) : 0;
 }
 
 function nearestEnemy(world, f) {
@@ -352,13 +355,30 @@ function nearestGround(world, f, prefer) {
   return 0;
 }
 
+// Jumping a gap: committed to the far side until landed (no turning back mid-air), with the air
+// jump once falling while still over the gap.
+function leap(world, f, bot, out, press) {
+  const l = bot.leap;
+  if (!l) return;
+  if ((f.grounded && world.tick - l.at > 6) || world.tick - l.at > 150 || !groundToward(world, f, l.dir)) {
+    bot.leap = null;
+    return;
+  }
+  out.mx = l.dir;
+  if (!f.grounded && f.vy > 0 && f.jumpsLeft > 0 && !groundBelow(world, f.x, f.y - 4, 48)) {
+    press('jp');
+    bot.holdJump = 0.3;
+  }
+}
+
 // Don't walk off a ledge into nothing, unless there's a reason to jump the gap.
 function avoidDrops(world, f, bot, out, press) {
   if (!f.grounded || out.mx === 0) return;
   if (groundBelow(world, f.x + out.mx * 20, f.y - 4, 220)) return;
-  if (bot.mustCross && groundAhead(world, f, out.mx)) {
+  if (out.mx === bot.cross && groundAhead(world, f, out.mx)) {
     press('jp');
     bot.holdJump = 0.5;
+    bot.leap = { dir: out.mx, at: world.tick };
   } else {
     out.mx = 0;
   }

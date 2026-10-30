@@ -838,7 +838,7 @@ export const sparesOf = (f) => (f.gun && GUNS[f.gun].magazines > 1 ? f.spareMags
 function windUpGunThrow(world, f, input, press) {
   if (f.hitstun > 0) f.gunHold = -1;
   if (press.sp) {
-    f.gunHold = 0;
+    Object.assign(f, { gunHold: 0, active: 'gun' });
     world.events.push({ type: 'dry', id: f.id, x: f.x, y: f.y - 20 });
   }
   if (f.gunHold < 0) return;
@@ -856,8 +856,9 @@ function windUpGunThrow(world, f, input, press) {
 // loses the charge.
 function chargeGun(world, f, g, input, press) {
   if (f.hitstun > 0) f.gunHold = -1;
+  // (Starting to charge puts the gun in hand, so it's seen charging: not just once it fires.)
   if (press.sp) {
-    if (f.reload <= 0 && f.fireCd <= 0 && f.ammo > 0) f.gunHold = 0;
+    if (f.reload <= 0 && f.fireCd <= 0 && f.ammo > 0) Object.assign(f, { gunHold: 0, active: 'gun' });
   }
   if (f.gunHold < 0) return;
   if (input.shoot) {
@@ -1066,6 +1067,20 @@ function updateBullets(world, st) {
       const pan = !!v.blocking && !!v.melee && !!MELEE[v.melee].blocksBullets && !b.thrown && Math.sign(b.vx) === -v.facing;
       const mirror = v.reflects > 0 && !b.thrown;
       if (t !== null && t < bestT) [best, bestT] = [{ fighter: v, pan, mirror }, t];
+    }
+    // Grenades flying or lying around (never one still in a hand) can be shot to set them off now.
+    for (const g of world.grenades) {
+      if (!shootable(world, g, b.owner)) continue;
+      const r = GRENADE.shotBox;
+      const t = segmentHitsRect(b.x, b.y, nx, ny, { x: g.x - r / 2, y: g.y - r / 2, w: r, h: r });
+      if (t !== null && t < bestT) [best, bestT] = [{ grenade: g }, t];
+    }
+    if (best?.grenade) {
+      // (The shot stops there; the grenade goes off this tick: see updateGrenades.)
+      best.grenade.fuse = 0;
+      best.grenade.shotBy = b.owner;
+      world.events.push({ type: 'spark', x: best.grenade.x, y: best.grenade.y, dx: -Math.sign(b.vx) || 1, dy: 0 });
+      return false;
     }
     if (best) {
       const px = b.x;
@@ -2548,24 +2563,34 @@ function updateGrenades(world, st) {
   });
 }
 
+// Can this grenade be shot (see updateBullets)? Not the banner (it never goes off), and not by
+// the one who threw it for GRENADE.ownShotGrace s (spraying right after a throw doesn't blow it
+// up in their face).
+function shootable(world, g, shooter) {
+  if (GRENADES[g.kind].plant) return false;
+  return !(g.owner === shooter && (world.tick - (g.born ?? 0)) * DT < GRENADE.ownShotGrace);
+}
+
 function detonate(world, st, g) {
   const k = GRENADES[g.kind];
   const at = { x: g.x, y: g.y };
+  // (Set off by a shot: the shooter gets the blame for what it does; see updateBullets.)
+  const by = g.shotBy ?? g.owner;
   if (k.explode) {
-    const burn = k.burn ? (f) => Object.assign(f, { burn: k.burn.time, burnBy: g.owner }) : null;
-    blast(world, at, k.explode, g.owner, burn, k.burn ? 'fireball' : k.cash ? 'moneyblast' : 'explosion', g.kind);
+    const burn = k.burn ? (f) => Object.assign(f, { burn: k.burn.time, burnBy: by }) : null;
+    blast(world, at, k.explode, by, burn, k.burn ? 'fireball' : k.cash ? 'moneyblast' : 'explosion', g.kind);
     if (k.cash) showerCash(world, at, k.cash);
   } else if (k.hole) {
     world.holes.push({ id: world.nextCloud++, x: at.x, y: at.y, r: k.hole.radius, t: k.hole.time, pull: k.hole.pull });
     world.events.push({ type: 'hole', x: at.x, y: at.y });
   } else if (k.cloud) {
-    world.clouds.push({ id: world.nextCloud++, kind: g.kind, x: at.x, y: at.y, r: k.cloud.radius, t: k.cloud.time, by: g.owner });
+    world.clouds.push({ id: world.nextCloud++, kind: g.kind, x: at.x, y: at.y, r: k.cloud.radius, t: k.cloud.time, by });
     world.events.push({ type: 'cloud', kind: g.kind, x: at.x, y: at.y });
   } else if (k.soda) {
     // As big as it was shaken.
     const p = g.power ?? 0;
     const e = Object.fromEntries(Object.keys(k.soda.max).map((key) => [key, k.soda.min[key] + (k.soda.max[key] - k.soda.min[key]) * p]));
-    blast(world, at, e, g.owner, null, 'soda', g.kind);
+    blast(world, at, e, by, null, 'soda', g.kind);
   } else if (k.polymorph) {
     world.events.push({ type: 'poof', x: at.x, y: at.y, r: k.polymorph.radius });
     for (const f of world.fighters) {

@@ -6,7 +6,9 @@
 // the rollback replays) and the drawing's share, and counts of what's alive (display objects,
 // particles, smoke puffs, dash afterimages, clouds, bullets).
 
-export const PERF = typeof location !== 'undefined' && new URLSearchParams(location.search).has('perf');
+import { pageParams } from '../params.js';
+
+export const PERF = pageParams().has('perf');
 
 const SECONDS = 120; // how much per-second history the log keeps
 const SPIKE_MS = 33; // a frame this slow (or slower) is a stutter: logged with what was happening

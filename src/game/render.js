@@ -30,7 +30,7 @@ const diag = (ox, oy) => ({ angle: -Math.PI / 4, ox, oy, mirror: true });
 const SPRITE_SHOTS = { coin: ['cash-coin', 10], goldcoin: ['cash-goldcoin', 16], bill: ['cash-bill', 10], diamond: ['cash-diamond', 10], cards: ['card-fly', 20], jackpot: ['chest', 0] };
 // How long the hand takes to whip a card overhead (s).
 const CARD_TOSS = 0.16;
-const TILTED = { knife: diag(0.2, 0.8), halberd: diag(0.3, 0.7), morningstar: diag(0.25, 0.75), carrot: diag(0.25, 0.75), fish: diag(0.15, 0.85), shovel: diag(0.15, 0.85), nodachi: diag(0.12, 0.88) };
+const TILTED = { knife: diag(0.2, 0.8), halberd: diag(0.3, 0.7), morningstar: diag(0.25, 0.75), carrot: diag(0.25, 0.75), fish: diag(0.15, 0.85), shovel: diag(0.15, 0.85), nodachi: { ...diag(0.12, 0.88), mirror: false } }; // (the nodachi's edge is drawn on its bottom side already)
 
 export { CHARACTERS };
 
@@ -1687,7 +1687,9 @@ export class Renderer {
       if (back.texture.key !== backKey) back.setTexture(backKey);
       const wobble = f.walk > 0 ? Math.sin(f.walk * 1.6) * 0.14 : Math.sin(this.anim * 2 + i) * 0.03;
       const bob = f.walk > 0 ? Math.abs(Math.sin(f.walk * 1.6)) * 1.5 : 0;
-      back.setVisible(true).setPosition(x - fc * 3, y - 19 + bob).setOrigin(0.5, 0.5).setRotation((fc > 0 ? -2.3 : -0.84) + wobble).setFlipY(fc > 0).setAlpha(a * 0.95);
+      // (Drawn diagonally, like the nodachi: turned to lie the way the straight ones do.)
+      const slant = TILTED[backKey] ? (fc > 0 ? -1 : 1) * (Math.PI / 4) : 0;
+      back.setVisible(true).setPosition(x - fc * 3, y - 19 + bob).setOrigin(0.5, 0.5).setRotation((fc > 0 ? -2.3 : -0.84) + slant + wobble).setFlipY(fc > 0).setAlpha(a * 0.95);
       back.setTint(0x8a8a96).setTintMode(Phaser.TintModes.MULTIPLY);
     } else {
       back.setVisible(false);

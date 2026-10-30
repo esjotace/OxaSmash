@@ -1,6 +1,7 @@
 // Online rooms, on the game server (see server/): the server runs the matches; everyone sends
 // their inputs and draws the state it sends back. The room's owner (whoever made it) sends the
 // commands that run it: rules, bots, start, rematch, back to the lobby.
+import { pageParams } from '../params.js';
 import { cleanName } from './names.js';
 
 export { CODE_LENGTH, cleanCode, cleanName } from './names.js';
@@ -13,7 +14,7 @@ export const serverUrl = () => import.meta.env.VITE_SERVER_URL || `${location.pr
 // Practice lag (the dev page only): ?lag=70 holds every message back as if your ping were 70 ms
 // (half each way), and &jitter=10 makes each one up to 10 ms earlier or later (still in order).
 // To see how online play looks and feels at a real ping, on localhost.
-const asked = import.meta.env.DEV && typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+const asked = import.meta.env.DEV ? pageParams() : null;
 export const PRACTICE_LAG = { ms: Math.max(0, Math.min(1000, Number(asked?.get('lag')) || 0)), jitter: Math.max(0, Math.min(200, Number(asked?.get('jitter')) || 0)) };
 // (&delay=N, dev page only: try another input delay, 0 to 6 ticks; see INPUT_DELAY in rollback.js.)
 export const PRACTICE_DELAY = asked?.has('delay') ? Math.max(0, Math.min(6, Number(asked.get('delay')) | 0)) : null;
@@ -34,9 +35,24 @@ export function describeNetError(err) {
   return err?.message || 'Something went wrong with the connection.';
 }
 
+// This tab's own id, the same across reloads of the tab (sessionStorage) and different for every
+// tab or browser: the server uses it to clear out this tab's old seat when it comes back (see
+// server/index.js). Without storage, a fresh one each time.
+function tabId() {
+  const fresh = () => Math.random().toString(36).slice(2, 12);
+  try {
+    let id = sessionStorage.getItem('oxasmash-tab');
+    if (!id) sessionStorage.setItem('oxasmash-tab', (id = fresh()));
+    return id;
+  } catch {
+    return fresh();
+  }
+}
+
 export class OnlineRoom {
   // Make a room ({ create: true, rules }) or join one ({ code }). Resolves once in the room.
   static connect({ name, char = null, create = false, code = '', rules = null }) {
+    const tab = tabId();
     return new Promise((resolve, reject) => {
       let ws;
       try {
@@ -54,7 +70,7 @@ export class OnlineRoom {
       };
       const timer = setTimeout(() => fail("Couldn't reach the game server. Check your connection and try again."), 10000);
       ws.onerror = () => fail("Couldn't reach the game server. It may be down; try again in a moment.");
-      ws.onopen = () => ws.send(JSON.stringify(create ? { t: 'create', name: cleanName(name), char, rules } : { t: 'join', code, name: cleanName(name), char }));
+      ws.onopen = () => ws.send(JSON.stringify(create ? { t: 'create', name: cleanName(name), char, rules, tab } : { t: 'join', code, name: cleanName(name), char, tab }));
       ws.onmessage = (e) => {
         const msg = parse(e.data);
         if (msg?.t === 'refused') return fail(String(msg.reason ?? 'The room refused you.').slice(0, 120));
@@ -141,8 +157,10 @@ export class OnlineRoom {
     this.send({ t, ...extra });
   }
 
+  // Leaving: say so first (a relay in between doesn't always pass on a closed connection), then go.
   close() {
     this.leaving = true;
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ t: 'bye' }));
     this.ws.close();
   }
 }

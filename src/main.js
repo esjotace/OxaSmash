@@ -1,4 +1,5 @@
 // Menus, lobby and results (plain DOM), and starting matches in the right mode.
+import { pageParams } from './params.js';
 import { PERF, perfLog, perfRestart } from './game/perf.js';
 import { OnlineRoom, RoomList, cleanCode, cleanName, describeNetError, CODE_LENGTH, PRACTICE_LAG, PRACTICE_DELAY } from './net/room.js';
 import { DUEL_MODES } from './net/duels.js';
@@ -498,6 +499,8 @@ function enterRoom(how, button, label) {
   });
 }
 
+// Closing or reloading the page: leave the room properly (see OnlineRoom.close).
+window.addEventListener('pagehide', () => state.room?.close());
 $('startMatch').onclick = () => state.room?.command('start');
 // The owner's stage pick, from the lobby (the rules screen shows it too).
 $('lobbyStage').onchange = () => {
@@ -1420,7 +1423,7 @@ $('name').value = store.get('oxasmash-name') || '';
 $('name').addEventListener('change', () => store.set('oxasmash-name', myName()));
 
 // An invite link (?room=CODE) fills in the code.
-const invited = cleanCode(new URLSearchParams(location.search).get('room') ?? '');
+const invited = cleanCode(pageParams().get('room') ?? '');
 if (invited.length === CODE_LENGTH) {
   $('joinCode').value = invited;
   $('name').focus();

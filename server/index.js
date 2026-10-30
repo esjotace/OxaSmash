@@ -95,6 +95,10 @@ wss.on('connection', (ws) => {
         const list = [...rooms.values()].map((r) => r.summary()).filter((r) => !r.private);
         return send({ t: 'rooms', s: msg.s, rooms: list.sort((a, b) => (a.ping ?? Infinity) - (b.ping ?? Infinity)) });
       }
+      // (This tab was already in a room and never really left (a reload through a relay that didn't
+      // pass on the closed connection): that old seat goes first.)
+      const tab = typeof msg.tab === 'string' ? msg.tab.slice(0, 40) : '';
+      if (tab && (msg.t === 'create' || msg.t === 'join')) for (const r of [...rooms.values()]) for (const p of [...r.players]) if (p.tab === tab && !p.left) p.drop?.();
       // The first message: make a room, or join one by its code.
       if (msg.t === 'create') {
         if (rooms.size >= MAX_ROOMS) return refuse('The server is full right now. Try again later.');
@@ -110,13 +114,30 @@ wss.on('connection', (ws) => {
         return refuse(i);
       }
       player = room.players[i];
+      player.tab = tab;
+      player.heard = now();
       player.kick = () => setTimeout(() => ws.close(), 300);
+      // Gone without a word (or a stalled connection): out of the room now, and the connection shut.
+      player.drop = () => {
+        const [r, k] = [room, room ? room.players.indexOf(player) : -1];
+        room = null;
+        if (k >= 0) r.leave(k, now());
+        ws.terminate();
+      };
       // (A new room's own rules, checked like any change.)
       if (msg.t === 'create' && msg.rules) room.receive(i, { t: 'rules', rules: msg.rules }, now());
       return;
     }
     const i = room.players.indexOf(player);
-    if (i >= 0) room.receive(i, msg, now());
+    if (i < 0) return;
+    player.heard = now();
+    // Leaving on purpose (see OnlineRoom.close).
+    if (msg.t === 'bye') {
+      room.leave(i, now());
+      room = null;
+      return;
+    }
+    room.receive(i, msg, now());
   });
   ws.on('close', () => {
     const i = room ? room.players.indexOf(player) : -1;
@@ -130,9 +151,16 @@ setInterval(() => {
   const t = now();
   for (const room of rooms.values()) room.update(t);
 }, TICK_MS);
+// (Anyone not heard from in HEARD_MS, not even answering the pings, is gone: see drop.)
+const HEARD_MS = 15000;
 setInterval(() => {
   const s = now();
-  for (const room of rooms.values()) for (const p of room.players) p.send?.({ t: 'ping', s });
+  for (const room of rooms.values()) {
+    for (const p of [...room.players]) {
+      if (p.send && !p.left && s - (p.heard ?? s) > HEARD_MS) p.drop?.();
+      else p.send?.({ t: 'ping', s });
+    }
+  }
 }, 1000);
 
 server.listen(PORT, HOST, () => console.log(`OxaSmash ${[VERSION, BUILD].filter(Boolean).join(' ')} server on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT} (rooms at /ws)`));

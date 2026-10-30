@@ -172,7 +172,9 @@ export const BLAST = { lift: 0.5, falloff: 0.5 };
 // Grenades: picked up (you carry at most `max`, used in the order you got them) and thrown with
 // the grenade button. Hold it to cook (the fuse runs in your hand; hold too long and it goes off
 // there) and to aim; let go to throw. They bounce, then go off when the fuse runs out.
-export const GRENADE = { max: 2, throwSpeed: 380, lift: 90, gravity: 700, bounce: 0.45, friction: 0.6, size: 6 };
+// shotBox: how big a target a grenade is for shots (px; see updateBullets); ownShotGrace: how long
+// after throwing it its thrower's own shots pass by it (s).
+export const GRENADE = { max: 2, throwSpeed: 380, lift: 90, gravity: 700, bounce: 0.45, friction: 0.6, size: 6, shotBox: 10, ownShotGrace: 0.2 };
 export const GRENADES = {
   frag: { name: 'Frag', fuse: 2.2, explode: { radius: 84, damage: 12, knockback: 440, knockbackGrowth: 4.5 } },
   // Big damage, less push, and sets you on fire (damage over time, no stun).

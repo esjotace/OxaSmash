@@ -1,4 +1,5 @@
 // The single Phaser.Game, created on the first match and reused after that.
+import { pageParams } from '../params.js';
 import Phaser from 'phaser';
 import { MatchScene, loadArt } from './MatchScene.js';
 import { VIEW_W, VIEW_H } from '../sim/constants.js';
@@ -17,7 +18,7 @@ let game = null;
 const NEEDED = Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H) * (window.devicePixelRatio || 1);
 const TOUCH = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 const SCALE_CAP = { sharp: 4, fast: 2, auto: TOUCH ? 3 : 4 }[settings.graphics] ?? 4;
-const FORCED = Number(new URLSearchParams(location.search).get('scale')) | 0;
+const FORCED = Number(pageParams().get('scale')) | 0;
 export const RENDER_SCALE = FORCED >= 1 && FORCED <= 4 ? FORCED : Math.max(1, Math.min(SCALE_CAP, Math.ceil(NEEDED)));
 // Drawn smaller than the window (enlarged to fit it).
 export const UPSCALED = RENDER_SCALE < NEEDED;
