@@ -59,6 +59,9 @@
               <input id="joinCode" aria-label="Room code" placeholder="CODE" maxlength="5" autocomplete="off" spellcheck="false" />
               <button id="joinRoom" class="btn">Join</button>
             </div>
+            <!-- The rooms on the server right now, best ping first (see RoomList in net/room.js). -->
+            <p id="roomListStatus" class="hint muted"></p>
+            <ul id="roomList" class="room-list"></ul>
           </section>
         </div>
 
@@ -100,7 +103,9 @@
         <div id="hostTools" class="row">
           <button id="addBot" class="btn small">Add bot</button>
           <label class="field small">Level <select id="lobbyBotLevel"><option value="easy">Easy</option><option value="normal" selected>Normal</option><option value="hard">Hard</option></select></label>
-          <button id="lobbyRulesBtn" class="btn small ghost">Rules</button>
+          <label class="field small">Stage <select id="lobbyStage"></select></label>
+          <label class="field small">Rules <select id="lobbyPreset"></select></label>
+          <button id="lobbyRulesBtn" class="btn small ghost">All rules…</button>
         </div>
         <p id="lobbyRules" class="muted"></p>
         <div class="row">
@@ -132,23 +137,30 @@
     <!-- Online: the room's rules, set before the room is created (and changeable from the lobby). -->
     <main id="roomRules" class="screen" hidden>
       <div class="panel narrow setup">
-        <h2>Room rules</h2>
+        <h2>Room rules</h2>
+        <p class="eyebrow">Stage</p>
         <div class="rules">
-          <label class="check"><input id="roomMelee" type="checkbox" checked /> Melee weapons</label>
-          <label class="check"><input id="roomRanged" type="checkbox" checked /> Ranged weapons (guns)</label>
-          <label class="check"><input id="roomThrown" type="checkbox" checked /> Thrown (grenades)</label>
-          <label class="check"><input id="roomItems" type="checkbox" checked /> Items</label>
-          <label class="field small">Lives <select id="roomLives"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
-          <label class="field small">Rounds <select id="roomRounds"><option value="1" selected>1</option><option value="3">Best of 3</option><option value="5">Best of 5</option></select></label>
           <label class="field small">Stage <select id="roomStage"></select></label>
         </div>
-        <details class="custom-rules">
+        <p class="eyebrow">Rules</p>
+        <div id="roomPresets" class="chips presets"></div>
+        <div class="rules">
+          <label class="field small">Lives <select id="roomLives"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
+          <label class="field small">Rounds <select id="roomRounds"><option value="1" selected>1</option><option value="3">Best of 3</option><option value="5">Best of 5</option></select></label>
+        </div>
+        <details id="roomCustom" class="custom-rules">
           <summary>Custom rules</summary>
+          <div class="rules">
+            <label class="check"><input id="roomMelee" type="checkbox" checked /> Melee weapons</label>
+            <label class="check"><input id="roomRanged" type="checkbox" checked /> Ranged weapons (guns)</label>
+            <label class="check"><input id="roomThrown" type="checkbox" checked /> Thrown (grenades)</label>
+            <label class="check"><input id="roomItems" type="checkbox" checked /> Items</label>
+          </div>
           <div class="rules">
             <label class="field small" title="Last round's winner wears the crown.">Crown <select id="roomCrown"><option value="show" selected>Just a hat</option><option value="bounty">Bounty: KO the champion to take it</option><option value="weight">Heavy: the champion takes more push</option></select></label>
             <label class="field small">Storm <select id="roomStorm"><option value="off">Off</option><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select></label>
           </div>
-        </details>
+        </details>
         <div class="row">
           <button id="roomRulesBack" class="btn ghost">Back</button>
           <button id="roomRulesGo" class="btn primary">Create room</button>
@@ -178,24 +190,31 @@
           <ul id="deviceList" class="bind-list"></ul>
           <p id="deviceProblem" class="status" role="status"></p>
         </section>
-        <section class="setup-step" data-step="3" hidden>
+        <section class="setup-step" data-step="3" hidden>
+          <p class="eyebrow">Stage</p>
           <div class="rules">
-            <label class="check"><input id="ruleMelee" type="checkbox" checked /> Melee weapons</label>
-            <label class="check"><input id="ruleRanged" type="checkbox" checked /> Ranged weapons (guns)</label>
-            <label class="check"><input id="ruleThrown" type="checkbox" checked /> Thrown (grenades)</label>
-            <label class="check"><input id="ruleItems" type="checkbox" checked /> Items</label>
+            <label class="field small">Stage <select id="ruleStage"></select></label>
+          </div>
+          <p class="eyebrow">Rules</p>
+          <div id="rulePresets" class="chips presets"></div>
+          <div class="rules">
             <label class="field small">Lives <select id="ruleLives"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select></label>
             <label class="field small">Rounds <select id="ruleRounds"><option value="1" selected>1</option><option value="3">Best of 3</option><option value="5">Best of 5</option></select></label>
             <label class="field small">Bots <select id="ruleBots"><option selected>0</option><option>1</option><option>2</option></select></label>
-            <label class="field small">Stage <select id="ruleStage"></select></label>
           </div>
-          <details class="custom-rules">
+          <details id="ruleCustom" class="custom-rules">
             <summary>Custom rules</summary>
+            <div class="rules">
+              <label class="check"><input id="ruleMelee" type="checkbox" checked /> Melee weapons</label>
+              <label class="check"><input id="ruleRanged" type="checkbox" checked /> Ranged weapons (guns)</label>
+              <label class="check"><input id="ruleThrown" type="checkbox" checked /> Thrown (grenades)</label>
+              <label class="check"><input id="ruleItems" type="checkbox" checked /> Items</label>
+            </div>
             <div class="rules">
               <label class="field small" title="Last round's winner wears the crown.">Crown <select id="ruleCrown"><option value="show" selected>Just a hat</option><option value="bounty">Bounty: KO the champion to take it</option><option value="weight">Heavy: the champion takes more push</option></select></label>
               <label class="field small">Storm <select id="ruleStorm"><option value="off">Off</option><option value="slow">Slow</option><option value="normal" selected>Normal</option><option value="fast">Fast</option></select></label>
             </div>
-          </details>
+          </details>
         </section>
         <div class="row">
           <button id="setupBack" class="btn ghost">Back</button>

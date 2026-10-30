@@ -72,7 +72,7 @@ export function toView(world) {
       gunHold: f.gunHold >= 0 && f.gun ? r2(Math.min(1, f.gunHold / (f.ammo === 0 && sparesOf(f) === 0 ? GUN_THROW.hold : GUNS[f.gun].charge?.time ?? 1))) : null,
       slimed: !!f.slimed,
       // The trident out on its chain: where its head is, and whether it has caught someone.
-      chain: f.chain ? { x: r1(f.chain.x), y: r1(f.chain.y), caught: f.chain.phase === 'pull' } : null,
+      chain: f.chain ? { x: r1(f.chain.x), y: r1(f.chain.y), x0: r1(f.chain.x0 ?? f.chain.x), y0: r1(f.chain.y0 ?? f.chain.y), born: f.chain.born ?? world.tick, caught: f.chain.phase === 'pull' } : null,
       muzzle: f.muzzle > 0,
       // Items: what's held up, the rune on you (and how much of it is left), rubbing the lamp,
       // jinxed, shots homing in.
@@ -84,8 +84,9 @@ export function toView(world) {
       homing: f.homing > 0,
       walk: r1(f.walk),
     })),
-    bullets: world.bullets.map((b) => ({ id: b.id, x: r1(b.x), y: r1(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy), thrown: b.thrown, kind: b.kind ?? null, look: b.look ?? null, size: b.size ?? 1, deflected: !!b.deflected })),
-    grenades: world.grenades.map((g) => ({ id: g.id, x: r1(g.x), y: r1(g.y), kind: g.kind, fuse: r2(g.fuse), stuck: g.stuck || g.on >= 0 })),
+    // (x0, y0, born: where and when it set off; see MatchScene's catch-up drawing.)
+    bullets: world.bullets.map((b) => ({ id: b.id, x: r1(b.x), y: r1(b.y), x0: r1(b.x0 ?? b.x), y0: r1(b.y0 ?? b.y), born: b.born ?? world.tick, vx: Math.round(b.vx), vy: Math.round(b.vy), thrown: b.thrown, kind: b.kind ?? null, look: b.look ?? null, size: b.size ?? 1, deflected: !!b.deflected })),
+    grenades: world.grenades.map((g) => ({ id: g.id, x: r1(g.x), y: r1(g.y), x0: r1(g.x0 ?? g.x), y0: r1(g.y0 ?? g.y), born: g.born ?? world.tick, kind: g.kind, fuse: r2(g.fuse), stuck: g.stuck || g.on >= 0 })),
     clouds: world.clouds.map((c) => ({ id: c.id, kind: c.kind, x: r1(c.x), y: r1(c.y), r: c.r, t: r2(c.t) })),
     // Slime glue on floors [x1, x2, y, t]; arrows stuck in walls [x, y, dir, t]; money lying
     // around [id, x, y, look, blinking].
@@ -93,7 +94,8 @@ export function toView(world) {
     holes: world.holes.map((h) => [h.id, r1(h.x), r1(h.y), h.r, r1(h.t)]),
     puddles: world.puddles.map((p) => [r1(p.x1), r1(p.x2), p.y, r1(p.t)]),
     footholds: world.footholds.map((h) => [h.x, h.y, h.dir, r1(h.t)]),
-    loot: world.loot.map((m) => [m.id, r1(m.x), r1(m.y), m.look, m.t > LOOT.lie ? 1 : 0]),
+    // ([id, x, y, look, about to vanish, x0, y0, born]: where and when it burst out last.)
+    loot: world.loot.map((m) => [m.id, r1(m.x), r1(m.y), m.look, m.t > LOOT.lie ? 1 : 0, r1(m.x0 ?? m.x), r1(m.y0 ?? m.y), m.born ?? world.tick]),
     paints: world.paints.map((p) => [r1(p.x1), r1(p.x2), p.y, p.owner, r1(p.t)]),
     training: world.training,
     infiniteAmmo: world.infiniteAmmo,

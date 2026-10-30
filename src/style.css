@@ -814,3 +814,44 @@ kbd {
   background: transparent !important;
   border: 2px solid var(--muted);
 }
+
+/* The Online menu's list of open rooms. */
+.room-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.room-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 4px 4px 10px;
+  font-size: 0.85rem;
+}
+.room-list .tag {
+  color: var(--muted);
+  margin-left: auto;
+  font-size: 0.78rem;
+}
+
+/* Rule presets (see rulesui.js). */
+.presets {
+  margin: 4px 0 10px;
+}
+.setup .eyebrow {
+  margin-top: 6px;
+}
+
+/* Results: players who left the room. */
+.players li.gone {
+  opacity: 0.4;
+}
+.players li.gone .who {
+  text-decoration: line-through;
+}

@@ -1,7 +1,6 @@
 // Online rooms, on the game server (see server/): the server runs the matches; everyone sends
 // their inputs and draws the state it sends back. The room's owner (whoever made it) sends the
 // commands that run it: rules, bots, start, rematch, back to the lobby.
-import { encodeInput } from '../sim/input.js';
 import { cleanName } from './names.js';
 
 export { CODE_LENGTH, cleanCode, cleanName } from './names.js';
@@ -9,7 +8,25 @@ export { CODE_LENGTH, cleanCode, cleanName } from './names.js';
 // Where the server is: VITE_SERVER_URL when the game was built with one (the game on GitHub
 // Pages, the server elsewhere), else /ws on this page's own address (the server serving the game,
 // or the dev server passing it on: see vite.config.js).
-export const SERVER_URL = import.meta.env.VITE_SERVER_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+export const serverUrl = () => import.meta.env.VITE_SERVER_URL || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+
+// Practice lag (the dev page only): ?lag=70 holds every message back as if your ping were 70 ms
+// (half each way), and &jitter=10 makes each one up to 10 ms earlier or later (still in order).
+// To see how online play looks and feels at a real ping, on localhost.
+const asked = import.meta.env.DEV && typeof location !== 'undefined' ? new URLSearchParams(location.search) : null;
+export const PRACTICE_LAG = { ms: Math.max(0, Math.min(1000, Number(asked?.get('lag')) || 0)), jitter: Math.max(0, Math.min(200, Number(asked?.get('jitter')) || 0)) };
+
+// Messages one way, held back by the practice lag (in order); straight through without it.
+function delayLine(deliver) {
+  const { ms, jitter } = PRACTICE_LAG;
+  if (!ms && !jitter) return deliver;
+  let last = 0;
+  return (msg) => {
+    const at = Math.max(last, performance.now() + ms / 2 + (Math.random() * 2 - 1) * jitter);
+    last = at;
+    setTimeout(() => deliver(msg), at - performance.now());
+  };
+}
 
 export function describeNetError(err) {
   return err?.message || 'Something went wrong with the connection.';
@@ -21,7 +38,7 @@ export class OnlineRoom {
     return new Promise((resolve, reject) => {
       let ws;
       try {
-        ws = new WebSocket(SERVER_URL);
+        ws = new WebSocket(serverUrl());
       } catch {
         return reject(new Error("Couldn't reach the game server."));
       }
@@ -55,14 +72,25 @@ export class OnlineRoom {
     this.code = code;
     this.leaving = false;
     this.reason = 'The connection to the room was lost.';
-    this.handlers = { lobby() {}, start() {}, snap() {}, closed() {}, duels() {} };
-    ws.onmessage = (e) => this.receive(parse(e.data));
+    this.handlers = { lobby() {}, start() {}, match() {}, closed() {}, duels() {}, standing() {} };
+    // A match's first messages, kept until the match is listening (it takes a moment to load).
+    this.early = null;
+    // (Both ways through the practice lag, if it's on.)
+    this.out = delayLine((text) => this.ws.readyState === WebSocket.OPEN && this.ws.send(text));
+    const incoming = delayLine((msg) => this.receive(msg));
+    ws.onmessage = (e) => incoming(parse(e.data));
     ws.onclose = () => this.lost();
     ws.onerror = () => this.lost();
   }
 
   on(name, fn) {
     this.handlers[name] = fn;
+    // (The match listening now: what came in meanwhile, in order.)
+    if (name === 'match' && this.early) {
+      const early = this.early;
+      this.early = null;
+      for (const msg of early) fn(msg);
+    }
     return this;
   }
 
@@ -71,8 +99,13 @@ export class OnlineRoom {
     if (msg.t === 'lobby') {
       if (typeof msg.code === 'string') this.code = msg.code.slice(0, 8);
       this.handlers.lobby(msg);
-    } else if (msg.t === 'start') this.handlers.start(msg);
-    else if (msg.t === 'snap') this.handlers.snap(msg);
+    } else if (msg.t === 'start') {
+      this.early = [];
+      this.handlers.start(msg);
+    } else if (msg.t === 'tk' || msg.t === 'ck' || msg.t === 'state' || msg.t === 'end') {
+      if (this.early) this.early.push(msg);
+      else this.handlers.match(msg);
+    } else if (msg.t === 'standing') this.handlers.standing(msg);
     else if (msg.t === 'duels') this.handlers.duels(msg);
     else if (msg.t === 'ping') this.send({ t: 'pong', s: msg.s });
     else if (msg.t === 'refused' && typeof msg.reason === 'string') this.reason = msg.reason.slice(0, 120);
@@ -85,11 +118,7 @@ export class OnlineRoom {
   }
 
   send(msg) {
-    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
-  }
-
-  sendInput(input) {
-    this.send({ t: 'in', i: encodeInput(input) });
+    if (this.ws.readyState === WebSocket.OPEN) this.out(JSON.stringify(msg));
   }
 
   // A duel move (see DuelBoard.act).
@@ -110,6 +139,45 @@ export class OnlineRoom {
   close() {
     this.leaving = true;
     this.ws.close();
+  }
+}
+
+// The open rooms, for the Online menu: asks the server every few seconds while it's up.
+// onUpdate({ ping, rooms }) with your ping to the server (ms) and its rooms, best ping first;
+// onUpdate(null) when the server can't be reached.
+export class RoomList {
+  constructor(onUpdate) {
+    this.onUpdate = onUpdate;
+    this.ws = null;
+    this.timer = 0;
+  }
+
+  start() {
+    if (this.ws) return;
+    const ws = (this.ws = new WebSocket(serverUrl()));
+    const ask = () => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'list', s: performance.now() }));
+    ws.onopen = () => {
+      ask();
+      this.timer = setInterval(ask, 3000);
+    };
+    ws.onmessage = (e) => {
+      const msg = parse(e.data);
+      if (msg?.t !== 'rooms' || !Array.isArray(msg.rooms)) return;
+      this.onUpdate({ ping: typeof msg.s === 'number' ? Math.round(performance.now() - msg.s) : null, rooms: msg.rooms });
+    };
+    ws.onclose = () => {
+      if (this.ws === ws) {
+        this.stop();
+        this.onUpdate(null);
+      }
+    };
+  }
+
+  stop() {
+    clearInterval(this.timer);
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close();
   }
 }
 

@@ -1,6 +1,9 @@
 // One online room on the game server: its players (people and bots), its rules, and the match
-// it runs. The server plays every match itself (the same rules code the page uses); players send
-// their inputs and draw the state it sends back. Whoever made the room is its owner (they set the
+// it runs. Every match is played both here and in each player's browser, from the same start and
+// the same inputs (rollback: see src/net/rollback.js). Players send their inputs, each marked with
+// the tick it's for; each tick, the server plays everyone's inputs (and the bots') and tells
+// everyone what they were. This copy is the one that counts: it decides the results, and any
+// browser that drifts from it is sent it whole. Whoever made the room is its owner (they set the
 // rules, add bots and start matches); if they leave, the next person in the list takes over.
 // A room seats up to RULES.maxOnline players (people and bots); up to RULES.maxWatching more
 // watch, and take a seat when one opens up (in the lobby), in the order they came.
@@ -8,21 +11,32 @@
 //
 // No network here: each player's `send(msg)` is given by the caller, and time comes in through
 // update(now) (ms), so tests can drive a room directly.
-import { createWorld, step, removeFighter } from '../src/sim/world.js';
-import { toView } from '../src/sim/view.js';
-import { NEUTRAL, decodeInput } from '../src/sim/input.js';
+import { step, removeFighter } from '../src/sim/world.js';
+import { NEUTRAL, decodeInput, encodeInput } from '../src/sim/input.js';
 import { DT, RULES, STORM_PACE } from '../src/sim/constants.js';
+import { pack, fingerprint } from '../src/sim/snapshot.js';
+import { makeWorld } from '../src/net/rollback.js';
 import { isStageId, rollStage, MIXED, DEFAULT_STAGE } from '../src/sim/stage.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { CHARACTERS, pickCast } from '../src/game/cast.js';
-import { DuelBoard } from '../src/net/duels.js';
+import { DuelBoard, DUEL_MODES } from '../src/net/duels.js';
 import { cleanName } from '../src/net/names.js';
 
-const SNAP_EVERY = 2; // ticks between state messages
+const CHECK_EVERY = 20; // ticks between fingerprints of the world (and pings, and how early inputs come)
+const AHEAD_MAX = 120; // inputs marked further ahead than this (2 s) are ignored
+const QUIET_AFTER = 10; // ticks without an input from a player: they've let go of everything
+const READY_WAIT = 5000; // ms the start waits for everyone's game to load (then it starts anyway)
+// (Letting go: no direction, nothing held; the press counts and aim stay, so nothing reads as a
+// press when they come back.)
+const COUNTS = ['jp', 'sp', 'mp', 'dp', 'rp', 'hp', 'ep', 'gp', 'xp', 'cp', 'kp'];
+const letGo = (input) => ({ ...NEUTRAL, ...Object.fromEntries(COUNTS.map((k) => [k, input[k] ?? 0])), ax: input.ax ?? 0, ay: input.ay ?? 0 });
 const MAX_STEPS = 15; // at most this many ticks caught up at once (after a stall)
 
+// The rule presets (the duel modes, but Crowd's Choice); anything else is custom.
+const PRESETS = Object.keys(DUEL_MODES).filter((k) => k !== 'crowd');
+
 // The rules a room starts with (the owner changes them).
-export const DEFAULT_RULES = { stocks: RULES.stocks, rounds: 1, stage: MIXED, rules: { melee: true, ranged: true, thrown: true, items: true }, stormPace: 'normal', crownRule: 'show' };
+export const DEFAULT_RULES = { stocks: RULES.stocks, rounds: 1, stage: MIXED, preset: 'normal', rules: { melee: true, ranged: true, thrown: true, items: true }, stormPace: 'normal', crownRule: 'show' };
 
 // Rules from a player: only known values get through.
 export function cleanRules(r = {}) {
@@ -32,7 +46,16 @@ export function cleanRules(r = {}) {
     stocks: Math.max(1, Math.min(5, Number.isInteger(r.stocks) ? r.stocks : RULES.stocks)),
     rounds: [1, 3, 5].includes(r.rounds) ? r.rounds : 1,
     stage: r.stage === MIXED || isStageId(r.stage) ? r.stage : DEFAULT_STAGE,
-    rules: { melee: on(rules.melee), ranged: on(rules.ranged), thrown: on(rules.thrown), items: on(rules.items) },
+    rules: {
+      melee: on(rules.melee),
+      ranged: on(rules.ranged),
+      thrown: on(rules.thrown),
+      items: on(rules.items),
+      // (A preset's extras: the 9mm without guns turning up, a couple of grenades to start.)
+      ...(typeof rules.startGun === 'boolean' ? { startGun: rules.startGun } : {}),
+      ...(Number.isInteger(rules.startGrenades) ? { startGrenades: Math.max(0, Math.min(2, rules.startGrenades)) } : {}),
+    },
+    preset: PRESETS.includes(r.preset) ? r.preset : 'custom',
     stormPace: Object.hasOwn(STORM_PACE, r.stormPace) ? r.stormPace : 'normal',
     crownRule: ['show', 'bounty', 'weight'].includes(r.crownRule) ? r.crownRule : 'show',
   };
@@ -72,7 +95,11 @@ export class Room {
       // (Mid-match, or after one: they watch what's on, and the duels.)
       this.duels?.join(i, now);
       this.pushDuels(now);
-      if (this.phase === 'match' && (!this.match.duel || this.duels)) send({ t: 'start', ...this.match.setup, you: -1 });
+      this.sendStanding();
+      if (this.phase === 'match') {
+        send({ t: 'start', ...this.match.setup, you: -1 });
+        send({ t: 'state', w: pack(this.match.world) });
+      }
     }
     return i;
   }
@@ -95,8 +122,10 @@ export class Room {
     else {
       p.left = true;
       p.send = null;
+      // (Out from the next tick, the same in every browser: see tick.)
       const f = this.fighterOf(i);
-      if (f >= 0) removeFighter(this.match.world, f);
+      if (f >= 0) this.match.outs.push(f);
+      this.match?.waiting.delete(i);
       this.duels?.leave(i);
     }
     // Nobody left: the room closes. Otherwise the next person takes over (a seated one first).
@@ -105,10 +134,28 @@ export class Room {
     if (this.phase === 'lobby') {
       this.seatWatchers();
       this.sendLobby();
-    } else this.pushDuels(now);
+    } else {
+      this.pushDuels(now);
+      this.sendStanding();
+    }
   }
 
   people = () => this.players.filter((p) => p.kind === 'person' && !p.left);
+
+  // For the room list: whose room, how full, what's on, and its people's average ping (ms; null
+  // until measured).
+  summary() {
+    const owner = this.people().find((p) => p.owner);
+    const pings = this.people().map((p) => p.ms).filter((ms) => typeof ms === 'number');
+    return {
+      code: this.code,
+      owner: owner?.name ?? '?',
+      players: this.seats(),
+      watching: this.watching(),
+      phase: this.phase,
+      ping: pings.length ? Math.round(pings.reduce((a, b) => a + b, 0) / pings.length) : null,
+    };
+  }
   isOwner = (i) => !!this.players[i]?.owner;
 
   // ---- Messages from a player --------------------------------------------------------------
@@ -118,11 +165,25 @@ export class Room {
     if (!p || p.left || !msg || typeof msg !== 'object') return;
     switch (msg.t) {
       case 'in': {
+        // An input, for tick k: kept until then (too late for it: the last one stands in).
         const f = this.fighterOf(i);
-        const input = f >= 0 && decodeInput(msg.i);
-        if (input) this.match.inputs[f] = input;
+        const input = f >= 0 && Number.isInteger(msg.k) && decodeInput(msg.i);
+        if (!input) break;
+        const m = this.match;
+        m.heard[f] = m.world.tick;
+        const early = msg.k - m.world.tick;
+        m.early[f] = Math.min(m.early[f], early);
+        if (early >= 0 && early <= AHEAD_MAX) m.pending[f].set(msg.k, input);
         break;
       }
+      case 'ready':
+        // (Their game has loaded the match: see waiting.)
+        this.match?.waiting.delete(i);
+        break;
+      case 'resync':
+        // (Their copy drifted from this one: here it is, whole.)
+        if (this.phase === 'match' && this.match) p.send?.({ t: 'state', w: pack(this.match.world) });
+        break;
       case 'pong':
         if (typeof msg.s === 'number') p.ms = Math.max(0, Math.round(now - msg.s));
         break;
@@ -170,8 +231,9 @@ export class Room {
         if (this.phase === 'lobby') this.startMatch(now);
         return;
       case 'again':
-        // Rematch (or the series' next round).
+        // Rematch (or the series' next round); not enough people left for one: the lobby.
         if (this.phase !== 'results') return;
+        if (!this.canRematch()) return this.ownerCommand({ t: 'lobby' }, now);
         if (this.series) {
           if (this.series.over) {
             Object.assign(this.series, { round: 1, over: false });
@@ -236,10 +298,18 @@ export class Room {
   // mode, for a duel (then only its players and its watchers are sent it).
   play(slots, { stocks, stage, rules = {}, stormPace = 'normal', crownRule = 'show', crown = -1, series = null, duel = null }, now) {
     const chars = castFor(slots.map((i) => this.players[i]));
-    const world = createWorld({ players: slots.length, stocks, stage, seed: (now * 2654435761) >>> 0, rules, storm: STORM_PACE[stormPace] ?? {}, crown, crownRule });
+    // (init: how the world is made; every browser makes the very same one from it.)
+    const init = { players: slots.length, stocks, stage, seed: (now * 2654435761) >>> 0, rules, stormPace: Object.hasOwn(STORM_PACE, stormPace) ? stormPace : 'normal', crown, crownRule };
+    const world = makeWorld(init);
     const bots = slots.map((i, f) => (this.players[i].kind === 'bot' ? createBot(this.players[i].level, (now + f * 7919) >>> 0) : null));
-    const setup = { names: slots.map((i) => this.players[i].name), chars, stocks, stage, crown, series, ...(duel ? { duel } : {}) };
-    this.match = { world, slots, bots, inputs: slots.map(() => NEUTRAL), chars: [...chars], acc: 0, last: now, outbox: [], duel, setup };
+    const setup = { names: slots.map((i) => this.players[i].name), chars, stocks, stage, crown, series, init, ...(duel ? { duel } : {}) };
+    // (pending: each player's inputs waiting for their tick; early: how early (in ticks) their
+    // inputs have been arriving, at worst, since the last check; outs: who left, out next tick.)
+    // (heard: the tick each player's last input arrived on.)
+    // (waiting: the people whose game hasn't said it's ready yet; the match starts once none are,
+    // or at `startBy`.)
+    const waiting = new Set(slots.filter((i) => this.players[i].kind === 'person'));
+    this.match = { world, slots, bots, inputs: slots.map(() => NEUTRAL), pending: slots.map(() => new Map()), early: slots.map(() => Infinity), heard: slots.map(() => 0), outs: [], chars: [...chars], acc: 0, last: now, duel, setup, waiting, startBy: now + READY_WAIT };
     this.phase = 'match';
     const watchers = duel ? this.duels.view(now).watching : [];
     this.players.forEach((p, i) => {
@@ -255,7 +325,10 @@ export class Room {
   // Time passing: the match plays on in fixed 1/60 s ticks; the duels' timers run.
   update(now) {
     const m = this.match;
-    if (m && this.phase === 'match') {
+    // (Not started until everyone's game is ready, or it's waited long enough.)
+    if (m && this.phase === 'match' && m.waiting.size && now < m.startBy) m.last = now;
+    else if (m && this.phase === 'match') {
+      m.waiting.clear();
       m.acc = Math.min(m.acc + (now - m.last) / 1000, MAX_STEPS * DT);
       m.last = now;
       while (m.acc >= DT && this.match === m) {
@@ -269,21 +342,44 @@ export class Room {
     }
   }
 
+  // Everyone who sees this match (its players, and whoever's watching).
+  audience(m, now) {
+    const watchers = m.duel ? this.duels.view(now).watching : null;
+    return this.players.filter((p, i) => !watchers || m.slots.includes(i) || watchers.includes(i));
+  }
+
   tick(m, now) {
     const w = m.world;
-    step(w, m.slots.map((_, f) => (m.bots[f] ? botInput(w, f, m.bots[f]) : m.inputs[f])));
-    m.outbox.push(...w.events);
-    if (w.tick % SNAP_EVERY === 0) {
-      const v = { ...toView(w), pings: m.slots.map((i) => (this.players[i].kind === 'bot' ? null : this.players[i].ms)) };
-      const msg = { t: 'snap', v, e: m.outbox.slice(0, 64), c: m.chars };
-      m.outbox = [];
-      const watchers = m.duel ? this.duels.view(now).watching : null;
-      this.players.forEach((p, i) => {
-        if (!watchers || m.slots.includes(i) || watchers.includes(i)) p.send?.(msg);
-      });
+    const t = w.tick;
+    // Each player's input for this tick (not here in time: their last one again); the bots'.
+    m.pending.forEach((pending, f) => {
+      if (pending.has(t)) m.inputs[f] = pending.get(t);
+      // (Not heard from in a while, a hidden window, say: they've let go, rather than running on.)
+      else if (t - m.heard[f] > QUIET_AFTER) m.inputs[f] = letGo(m.inputs[f]);
+      for (const k of pending.keys()) if (k <= t) pending.delete(k);
+    });
+    // (Played exactly as sent: through the same encoding, the bots' aim rounded like everyone's.)
+    const codes = m.slots.map((_, f) => encodeInput(m.bots[f] ? botInput(w, f, m.bots[f]) : m.inputs[f]));
+    const inputs = codes.map((c) => decodeInput(c));
+    const outs = m.outs.splice(0);
+    for (const f of outs) removeFighter(w, f);
+    step(w, inputs);
+    // Everyone's inputs on it, to everyone: each browser plays the same tick with them.
+    const audience = this.audience(m, now);
+    const msg = { t: 'tk', k: t, i: codes, ...(outs.length ? { o: outs } : {}) };
+    for (const p of audience) p.send?.(msg);
+    // Now and then: a fingerprint of the world (to catch a browser that drifted), pings, how early
+    // each player's inputs arrive (their browser keeps it to a tick or two), the characters.
+    if (w.tick % CHECK_EVERY === 0) {
+      const check = { t: 'ck', k: w.tick, h: fingerprint(w), p: m.slots.map((i) => (this.players[i].kind === 'bot' ? null : this.players[i].ms)), e: m.early.map((e) => (e === Infinity ? null : e)), c: m.chars };
+      m.early.fill(Infinity);
+      for (const p of audience) p.send?.(check);
     }
     // Over (and the end shown for a moment): the results.
-    if (w.phase === 'over' && w.timer <= 0) this.matchOver(m, now);
+    if (w.phase === 'over' && w.timer <= 0) {
+      for (const p of audience) p.send?.({ t: 'end', k: w.tick });
+      this.matchOver(m, now);
+    }
   }
 
   matchOver(m, now) {
@@ -300,9 +396,28 @@ export class Room {
       this.series.over = w.wins >= Math.ceil(this.series.rounds / 2);
     }
     // The honor duels open at the end of the match (in a series, once the series is decided).
-    if (this.series && !this.series.over) return;
-    this.duels = new DuelBoard(this.players, now);
-    this.pushDuels(now);
+    if (!this.series || this.series.over) {
+      this.duels = new DuelBoard(this.players, now);
+      this.pushDuels(now);
+    }
+    this.sendStanding();
+  }
+
+  // After a match: enough people (and bots) left for another? (Anyone watching gets a seat.)
+  canRematch() {
+    const seated = this.players.filter((p) => p.seated && !p.left).length;
+    const waiting = this.players.filter((p) => !p.seated && !p.left).length;
+    return Math.min(RULES.maxOnline, seated + waiting) >= 2;
+  }
+
+  // On the results screen: who from the match has left (by fighter), and whether a rematch and
+  // a duel are still possible.
+  sendStanding() {
+    const m = this.match;
+    if (this.phase !== 'results' || !m) return;
+    const left = m.slots.map((i, f) => (this.players[i]?.left ? f : -1)).filter((f) => f >= 0);
+    const duel = this.players.filter((p) => !p.left).length >= 2;
+    for (const p of this.players) p.send?.({ t: 'standing', left, rematch: this.canRematch(), duel });
   }
 
   // ---- Honor duels -------------------------------------------------------------------------

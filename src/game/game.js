@@ -1,6 +1,6 @@
 // The single Phaser.Game, created on the first match and reused after that.
 import Phaser from 'phaser';
-import { MatchScene } from './MatchScene.js';
+import { MatchScene, loadArt } from './MatchScene.js';
 import { VIEW_W, VIEW_H } from '../sim/constants.js';
 
 let game = null;
@@ -14,7 +14,8 @@ export const RENDER_SCALE = Math.max(
   Math.min(4, Math.ceil(Math.min(window.innerWidth / VIEW_W, window.innerHeight / VIEW_H) * (window.devicePixelRatio || 1))),
 );
 
-export function startMatch(cfg) {
+// The Phaser game, made the first time it's needed.
+function ensureGame() {
   if (!game) {
     game = new Phaser.Game({
       type: Phaser.AUTO,
@@ -30,10 +31,25 @@ export function startMatch(cfg) {
       scene: [],
     });
     game.scene.add('match', MatchScene, false);
+    game.scene.add('warm', { key: 'warm', preload() { loadArt(this); } }, false);
     // Local dev server only (not in builds): lets test scripts inspect the running game.
     if (import.meta.env.DEV) window.__oxasmash = game;
   }
-  game.scene.start('match', cfg);
+  return game;
+}
+
+export function startMatch(cfg) {
+  const g = ensureGame();
+  // (The art still loading ahead: the match starts once it's in, rather than loading it twice.)
+  const warm = g.scene.getScene('warm');
+  if (warm?.load?.isLoading()) warm.load.once('complete', () => g.scene.start('match', cfg));
+  else g.scene.start('match', cfg);
+}
+
+// Load the game's art ahead of a match (joining a room), so the match starts without the wait.
+export function warmUp() {
+  const g = ensureGame();
+  if (!g.scene.isActive('match') && !g.scene.isActive('warm')) g.scene.start('warm');
 }
 
 // The page's in-game menu talks to the match through these.

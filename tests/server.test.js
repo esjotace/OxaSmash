@@ -46,6 +46,19 @@ describe('game server rooms', () => {
     expect(r.rules.ranged).toBe(true);
   });
 
+  it('rule presets come through (what they put in play, and their extras)', () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    room.receive(a.i, { t: 'rules', rules: { preset: 'grenades', rules: { melee: false, ranged: false, thrown: true, items: false, startGrenades: 2 } } }, 0);
+    expect(a.last('lobby').rules).toMatchObject({ preset: 'grenades', rules: { ranged: false, thrown: true, startGrenades: 2 } });
+    room.receive(a.i, { t: 'rules', rules: { preset: 'nonsense', rules: { startGrenades: 99 } } }, 0);
+    expect(a.last('lobby').rules).toMatchObject({ preset: 'custom', rules: { startGrenades: 2 } });
+    room.receive(a.i, { t: 'addBot' }, 0);
+    room.receive(a.i, { t: 'rules', rules: { preset: 'gentleman', rules: { melee: false, ranged: false, thrown: false, items: false } } }, 0);
+    room.receive(a.i, { t: 'start' }, 0);
+    expect(room.match.world.fighters.every((f) => !f.hasGun)).toBe(true);
+  });
+
   it(`takes up to ${RULES.maxOnline} players, people and bots, and ${RULES.maxWatching} watching`, () => {
     const room = new Room('ABCDE');
     const a = person(room, 'Ana');
@@ -82,19 +95,26 @@ describe('game server rooms', () => {
     expect(lobby.find((p) => p.name === 'Hugo').watching).toBe(true);
   });
 
-  it('plays the match itself: inputs in, snapshots out, then the results and the duels', () => {
+  it("plays the match itself: inputs in (for their tick), everyone's inputs out, then the results and the duels", () => {
     const room = new Room('ABCDE');
     const a = person(room, 'Ana');
     room.receive(a.i, { t: 'rules', rules: { stocks: 1, stormPace: 'fast' } }, 0);
     for (let k = 0; k < 3; k++) room.receive(a.i, { t: 'addBot', level: 'hard' }, 0);
     room.receive(a.i, { t: 'start' }, 0);
+    room.receive(a.i, { t: 'ready' }, 0); // (Ana's game has loaded: the match can start)
     const start = a.last('start');
     expect(start.names.length).toBe(4);
     expect(start.you).toBe(0);
     const x0 = room.match.world.fighters[0].x;
-    room.receive(a.i, { t: 'in', i: encodeInput({ ...NEUTRAL, mx: 1 }) }, 0);
-    let t = run(room, 0, 4); // (past the countdown)
-    expect(a.inbox.some((m) => m.t === 'snap')).toBe(true);
+    // Past the countdown, walking right for a second (each input sent ahead, for its tick).
+    let t = run(room, 0, 3.2);
+    const from = room.match.world.tick;
+    for (let k = from; k < from + 60; k++) room.receive(a.i, { t: 'in', i: encodeInput({ ...NEUTRAL, mx: 1 }), k }, t);
+    t = run(room, t, 1.1);
+    const tk = a.inbox.filter((m) => m.t === 'tk');
+    expect(tk.length).toBeGreaterThan(200);
+    expect(tk[200].i.length).toBe(4); // (everyone's inputs, the bots' too)
+    expect(a.inbox.some((m) => m.t === 'ck' && Number.isInteger(m.h))).toBe(true);
     expect(room.match.world.fighters[0].x).toBeGreaterThan(x0 + 20);
     // Bots fight it out (the person walking into whatever stopped them) until it's over.
     for (let k = 0; k < 400 && room.phase === 'match'; k++) t = run(room, t, 1);
@@ -142,5 +162,29 @@ describe('game server rooms', () => {
     room.matchOver(room.match, 1);
     expect(room.series.over).toBe(true);
     expect(a.last('duels').d.phase).toBe('gather');
+  });
+
+  it("the countdown waits for everyone's game to load (or 5 s), not for bots or anyone watching", () => {
+    const room = new Room('ABCDE');
+    const a = person(room, 'Ana');
+    const b = person(room, 'Beto');
+    room.receive(a.i, { t: 'addBot' }, 0);
+    room.receive(a.i, { t: 'start' }, 0);
+    room.receive(a.i, { t: 'ready' }, 0);
+    run(room, 0, 1);
+    expect(room.match.world.tick).toBe(0); // (Beto's still loading)
+    room.receive(b.i, { t: 'ready' }, 1000);
+    run(room, 1000, 1);
+    expect(room.match.world.tick).toBeGreaterThan(50);
+    // A game that never says it's ready: the match starts anyway after 5 s.
+    const late = new Room('FGHIJ');
+    const c = person(late, 'Caro');
+    person(late, 'Dani');
+    late.receive(c.i, { t: 'start' }, 0);
+    late.receive(c.i, { t: 'ready' }, 0);
+    run(late, 0, 4.9);
+    expect(late.match.world.tick).toBe(0);
+    run(late, 4900, 1);
+    expect(late.match.world.tick).toBeGreaterThan(30);
   });
 });

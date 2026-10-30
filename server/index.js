@@ -63,11 +63,19 @@ function newRoom() {
   return null;
 }
 
-const wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_MESSAGE });
+// (Messages are compressed: a 6-player snapshot goes from ~6 KB to a few hundred bytes.)
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: MAX_MESSAGE, perMessageDeflate: { threshold: 128 } });
+// The same message to many (a snapshot): written out once.
+const packed = new WeakMap();
+const pack = (msg) => {
+  let text = packed.get(msg);
+  if (!text) packed.set(msg, (text = JSON.stringify(msg)));
+  return text;
+};
 wss.on('connection', (ws) => {
   let room = null;
   let player = null; // this connection's entry in room.players
-  const send = (msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+  const send = (msg) => ws.readyState === ws.OPEN && ws.send(pack(msg));
   const refuse = (reason) => {
     send({ t: 'refused', reason });
     setTimeout(() => ws.close(), 300);
@@ -81,6 +89,11 @@ wss.on('connection', (ws) => {
     }
     if (!msg || typeof msg !== 'object') return;
     if (!room) {
+      // The room list (the Online menu asks every few seconds; s: its clock, sent back for its ping).
+      if (msg.t === 'list') {
+        const list = [...rooms.values()].map((r) => r.summary());
+        return send({ t: 'rooms', s: msg.s, rooms: list.sort((a, b) => (a.ping ?? Infinity) - (b.ping ?? Infinity)) });
+      }
       // The first message: make a room, or join one by its code.
       if (msg.t === 'create') {
         if (rooms.size >= MAX_ROOMS) return refuse('The server is full right now. Try again later.');

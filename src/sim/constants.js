@@ -576,6 +576,24 @@ export const DOOR = {
 // explosions `blast` times theirs. Broken, it's gone for the rest of the match.
 export const COVER = { hpPerTile: 40, blast: 2, gunOver: 3 };
 
+// Props (planned, not in the game yet: see docs/props.md): stage objects that are low cover where
+// they stand and a weapon once picked up. `on: false` keeps a prop out of the game until it's built.
+//   w, h: its size (px); hp: health as cover (like COVER: shots, hits and blasts wear it down);
+//   carrySlow: your speed while carrying it; throw: thrown like a heavy weapon (see LIGHT_THROW for
+//   the fields), breaking where it lands (`breaks`); swing: hit with it held, if at all.
+export const PROPS = {
+  chair: {
+    on: false,
+    name: 'Chair',
+    w: 16,
+    h: 16,
+    hp: 30,
+    carrySlow: 0.85,
+    throw: { holdToThrow: 0.3, speed: 360, lift: 140, gravity: 700, damage: 9, knockback: 260, knockbackGrowth: 3.2, breaks: true },
+    swing: null,
+  },
+};
+
 export const BARREL = {
   w: 18,
   h: 24,

@@ -1,6 +1,7 @@
 // Menus, lobby and results (plain DOM), and starting matches in the right mode.
-import { OnlineRoom, cleanCode, cleanName, describeNetError, CODE_LENGTH } from './net/room.js';
+import { OnlineRoom, RoomList, cleanCode, cleanName, describeNetError, CODE_LENGTH, PRACTICE_LAG } from './net/room.js';
 import { DUEL_MODES } from './net/duels.js';
+import { rulesPicker, PRESETS } from './rulesui.js';
 import { PLAYER_COLORS } from './game/palette.js';
 import { RULES, GUNS, MELEE, GRENADES, ITEMS } from './sim/constants.js';
 import { describe } from './sim/describe.js';
@@ -28,11 +29,15 @@ const $ = (id) => document.getElementById(id);
 const VERSION = import.meta.env.VITE_APP_VERSION || 'dev';
 const BUILD = import.meta.env.VITE_APP_BUILD;
 $('version').textContent = BUILD ? `${VERSION} · build ${BUILD}` : VERSION;
+// (Practice lag on: said in the corner, so it's not mistaken for a slow connection.)
+if (PRACTICE_LAG.ms || PRACTICE_LAG.jitter) $('version').textContent += ` · practice lag ${PRACTICE_LAG.ms} ms${PRACTICE_LAG.jitter ? ` ±${PRACTICE_LAG.jitter}` : ''}`;
 
 // Phaser is most of the download, so the menu shows first and the game loads right after.
 let gameModule = null;
 const loadGame = () => (gameModule ??= import('./game/game.js'));
 const startMatch = (cfg) => loadGame().then((m) => m.startMatch(cfg));
+// (The art, loaded ahead of an online match, while in the room.)
+const warmUp = () => loadGame().then((m) => m.warmUp());
 const stopMatch = () => gameModule?.then((m) => m.stopMatch());
 
 // role: null for local play, 'online' in a room on the game server; owner: whether you run that
@@ -74,6 +79,9 @@ const store = {
 
 function show(id) {
   for (const el of document.querySelectorAll('.screen')) el.hidden = el.id !== id;
+  // (The room list keeps itself up to date only while the main menu is showing.)
+  if (id === 'menu') roomList.start();
+  else roomList.stop();
   $('quit').hidden = id !== null;
   // Leaving the match (results, menus): close the in-game menu and let go of the mouse.
   if (id !== null) {
@@ -197,7 +205,7 @@ function renderBotLobby() {
     }),
   );
   $('botAdd').disabled = botMatch.bots.length >= RULES.maxPlayers;
-  $('botRules').textContent = `Rules: ${rulesSummary()}`;
+  $('botRules').textContent = `Stage: ${stageName(roomRules().stage)} · Rules: ${rulesSummary()}`;
 }
 
 $('botAdd').onclick = () => {
@@ -225,8 +233,11 @@ $('botStart').onclick = () => {
 const connectedPads = () => [...(navigator.getGamepads?.() ?? [])].filter((g) => g && g.connected).map((g) => g.index).filter((n) => n < 4);
 const DEVICES = ['kbm', 'pad0', 'pad1', 'pad2', 'pad3'];
 const setup = { step: 1, players: 2, devices: ['kbm', 'pad0', 'pad1', 'pad2'] };
-for (const option of $('stage').options) $('ruleStage').append(new Option(option.text, option.value, false, option.selected));
-for (const option of $('stage').options) $('roomStage').append(new Option(option.text, option.value, false, option.selected));
+for (const id of ['ruleStage', 'roomStage', 'lobbyStage']) for (const option of $('stage').options) $(id).append(new Option(option.text, option.value, false, option.selected));
+// The rules pickers (presets, or custom), remembered between games: Same screen's, and the one
+// online rooms and Bot match share.
+const localRules = rulesPicker('rule', 'oxasmash.rules.local');
+const roomPicker = rulesPicker('room', 'oxasmash.rules.room', () => !$('botLobby').hidden && renderBotLobby());
 
 $('playLocal').onclick = () => {
   setup.step = 1;
@@ -314,7 +325,7 @@ $('setupNext').onclick = () => {
   const rounds = Number($('ruleRounds').value);
   state.series = rounds > 1 ? { rounds, wins: roster.map(() => 0), round: 1 } : null;
   state.crownName = null;
-  const extra = { rules: { melee: $('ruleMelee').checked, ranged: $('ruleRanged').checked, thrown: $('ruleThrown').checked, items: $('ruleItems').checked }, stormPace: $('ruleStorm').value, crownRule: $('ruleCrown').value };
+  const extra = { rules: localRules.read().rules, stormPace: $('ruleStorm').value, crownRule: $('ruleCrown').value };
   const stage = Object.hasOwn(STAGES, $('ruleStage').value) || $('ruleStage').value === MIXED ? $('ruleStage').value : DEFAULT_STAGE;
   playLocal(roster, Number($('ruleLives').value), stage, false, extra);
 };
@@ -361,16 +372,21 @@ $('roomRulesGo').onclick = () => {
 // The rules as set on the rules screen.
 function roomRules() {
   const stage = Object.hasOwn(STAGES, $('roomStage').value) || $('roomStage').value === MIXED ? $('roomStage').value : DEFAULT_STAGE;
-  const rules = { melee: $('roomMelee').checked, ranged: $('roomRanged').checked, thrown: $('roomThrown').checked, items: $('roomItems').checked };
-  return { stocks: Number($('roomLives').value) || RULES.stocks, rounds: Number($('roomRounds').value) || 1, stage, rules, stormPace: $('roomStorm').value, crownRule: $('roomCrown').value };
+  const { preset, rules } = roomPicker.read();
+  return { stocks: Number($('roomLives').value) || RULES.stocks, rounds: Number($('roomRounds').value) || 1, stage, preset, rules, stormPace: $('roomStorm').value, crownRule: $('roomCrown').value };
 }
 
 // Rules in a line, for the lobby (the room's, as the server has them; else the rules screen's).
+// The stage's name, from the menu's list.
+const stageName = (stage) => [...$('roomStage').options].find((o) => o.value === String(stage))?.text ?? String(stage);
+
+// The rules in a line (the stage is shown on its own): the preset, or what custom rules turn off.
 function rulesSummary(r = roomRules()) {
   const label = (id, value) => [...$(id).options].find((o) => o.value === String(value))?.text ?? String(value);
   const on = r.rules ?? {};
   const off = [['melee', 'no melee'], ['ranged', 'no guns'], ['thrown', 'no grenades'], ['items', 'no items']].filter(([k]) => on[k] === false).map(([, t]) => t);
-  const parts = [`${r.stocks} ${r.stocks === 1 ? 'life' : 'lives'}`, r.rounds > 1 ? `best of ${r.rounds}` : '', label('roomStage', r.stage), ...(off.length ? off : ['everything on']), `storm ${label('roomStorm', r.stormPace).toLowerCase()}`].filter(Boolean);
+  const what = PRESETS.includes(r.preset) ? [DUEL_MODES[r.preset].name] : off.length ? off : ['everything on'];
+  const parts = [...what, `${r.stocks} ${r.stocks === 1 ? 'life' : 'lives'}`, r.rounds > 1 ? `best of ${r.rounds}` : '', `storm ${label('roomStorm', r.stormPace).toLowerCase()}`].filter(Boolean);
   if (r.crownRule && r.crownRule !== 'show') parts.push(`crown: ${r.crownRule}`);
   return parts.join(' · ');
 }
@@ -382,6 +398,7 @@ function enterRoom(how, button, label) {
       const room = await OnlineRoom.connect({ name: myName(), char: deviceSettings('kbm').character, ...how });
       state.role = 'online';
       state.room = room;
+      warmUp();
       state.lobby = null;
       state.owner = false;
       state.crownName = null;
@@ -396,6 +413,11 @@ function enterRoom(how, button, label) {
         })
         .on('start', startOnline)
         .on('duels', onDuels)
+        .on('standing', (msg) => {
+          state.standing = { left: Array.isArray(msg.left) ? msg.left.filter(Number.isInteger) : [], rematch: msg.rematch !== false, duel: msg.duel !== false };
+          resultsButtons();
+          renderDuelBoard();
+        })
         .on('closed', (reason) => {
           backToMenu();
           toast(reason);
@@ -407,6 +429,21 @@ function enterRoom(how, button, label) {
 }
 
 $('startMatch').onclick = () => state.room?.command('start');
+// The owner's rules pick, from the lobby: a preset at once; Custom opens the whole rules screen.
+for (const key of PRESETS) $('lobbyPreset').append(new Option(DUEL_MODES[key].name, key));
+$('lobbyPreset').append(new Option('Custom rules…', 'custom'));
+$('lobbyPreset').onchange = () => {
+  roomPicker.choose($('lobbyPreset').value);
+  if ($('lobbyPreset').value === 'custom') return $('lobbyRulesBtn').click();
+  state.room?.command('rules', { rules: roomRules() });
+};
+
+// The owner's stage pick, from the lobby (the rules screen shows it too).
+$('lobbyStage').onchange = () => {
+  $('roomStage').value = $('lobbyStage').value;
+  $('roomStage').dispatchEvent(new Event('change'));
+  state.room?.command('rules', { rules: roomRules() });
+};
 
 function join() {
   const code = cleanCode($('joinCode').value);
@@ -418,6 +455,34 @@ function join() {
 }
 
 $('joinRoom').onclick = join;
+
+// The rooms on the server, under the code: whose, how full, what's on, best ping first.
+const roomList = new RoomList((list) => {
+  if (!list) {
+    $('roomListStatus').textContent = "Can't reach the game server right now.";
+    $('roomList').replaceChildren();
+    return;
+  }
+  const n = list.rooms.length;
+  $('roomListStatus').textContent = `${n ? `${n} open room${n === 1 ? '' : 's'}` : 'No rooms yet: make one!'}${list.ping !== null ? ` · your ping ${list.ping} ms` : ''}`;
+  $('roomList').replaceChildren(
+    ...list.rooms.slice(0, 20).map((r) => {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'who';
+      name.textContent = `${cleanName(r.owner)}'s room`;
+      const full = r.players >= RULES.maxOnline;
+      const info = document.createElement('span');
+      info.className = 'tag';
+      info.textContent = [`${r.players}/${RULES.maxOnline}`, r.watching ? `${r.watching} watching` : '', r.phase === 'lobby' ? 'in the lobby' : 'playing', Number.isInteger(r.ping) ? `${r.ping} ms` : ''].filter(Boolean).join(' · ');
+      const code = cleanCode(r.code ?? '');
+      const go = rowButton(full || r.phase !== 'lobby' ? 'Watch' : 'Join', () => enterRoom({ code }, go, 'Joining…'));
+      li.append(name, info, go);
+      return li;
+    }),
+  );
+});
+if (!$('menu').hidden) roomList.start();
 $('joinCode').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') join();
 });
@@ -430,20 +495,25 @@ function startOnline(msg) {
   const isDuel = Object.hasOwn(DUEL_MODES, msg.duel);
   if (names.length < 2) return;
   $('duelPick').hidden = true;
+  state.standing = null; // (who's left, after this match: see 'standing')
   const stocks = Number.isInteger(msg.stocks) ? Math.max(1, Math.min(5, msg.stocks)) : RULES.stocks;
   const stage = isStageId(msg.stage) ? msg.stage : DEFAULT_STAGE;
   const chars = Array.isArray(msg.chars) ? msg.chars : [];
   const roster = names.map((name, i) => ({ name, kind: i === you ? 'kbm' : 'remote', char: CHARACTERS.includes(chars[i]) ? chars[i] : undefined, crowned: msg.crown === i }));
   state.onScreen = you >= 0 ? [roster[you]] : [];
+  // How the server made the match's world: this browser makes the very same one (rollback).
+  const made = msg.init;
+  if (!made || typeof made !== 'object' || made.players !== names.length || !Number.isInteger(made.seed) || !isStageId(made.stage)) return;
+  const init = { players: names.length, stocks, stage, seed: made.seed >>> 0, rules: made.rules && typeof made.rules === 'object' ? made.rules : {}, stormPace: String(made.stormPace ?? 'normal'), crown: Number.isInteger(made.crown) ? made.crown : -1, crownRule: String(made.crownRule ?? 'show') };
   if (isDuel) {
     show(null);
-    return startMatch({ mode: 'client', room: state.room, roster, you, stocks, stage, onEnd: () => showDuelScreen() });
+    return startMatch({ mode: 'client', room: state.room, roster, you, stocks, stage, init, onEnd: () => showDuelScreen() });
   }
   // Rounds: the series so far (the score is counted here the same way from each result).
   const s = msg.series;
   state.series = s && Number.isInteger(s.rounds) && Number.isInteger(s.round) && Array.isArray(s.wins) ? { rounds: s.rounds, round: s.round, wins: names.map((_, i) => Number(s.wins[i]) || 0) } : null;
   show(null);
-  startMatch({ mode: 'client', room: state.room, roster, you, stocks, stage, onEnd: (view) => showResults(view, roster) });
+  startMatch({ mode: 'client', room: state.room, roster, you, stocks, stage, init, onEnd: (view) => showResults(view, roster) });
 }
 
 // ---- Lobby ------------------------------------------------------------------
@@ -474,7 +544,11 @@ function renderLobby() {
   $('hostTools').hidden = !owner;
   $('addBot').disabled = players.length >= RULES.maxOnline;
   $('lobbyRules').hidden = !state.lobby?.rules;
-  $('lobbyRules').textContent = state.lobby?.rules ? `Rules: ${rulesSummary(state.lobby.rules)}` : '';
+  // (The stage on its own: the owner picks it right here; everyone else sees it named.)
+  const r = state.lobby?.rules;
+  if (r && $('lobbyStage').value !== r.stage) $('lobbyStage').value = r.stage;
+  if (r) $('lobbyPreset').value = PRESETS.includes(r.preset) ? r.preset : 'custom';
+  $('lobbyRules').textContent = r ? `${owner ? '' : `Stage: ${stageName(r.stage)} · `}Rules: ${rulesSummary(r)}` : '';
   $('startMatch').hidden = !owner;
   $('startMatch').disabled = players.length < 2;
   $('lobbyStatus').textContent = !players.length
@@ -529,7 +603,13 @@ function showResults(view, roster) {
   }
   const order = view.fighters.map((f, i) => ({ f, i })).sort((a, b) => b.f.stocks - a.f.stocks || b.f.kos - a.f.kos);
   const list = $('scores');
-  list.replaceChildren(...order.map(({ f, i }) => playerRow(roster[i]?.name ?? '?', i, `${f.kos} KO · ${f.stocks} ${f.stocks === 1 ? 'life' : 'lives'} left`)));
+  list.replaceChildren(
+    ...order.map(({ f, i }) => {
+      const row = playerRow(roster[i]?.name ?? '?', i, `${f.kos} KO · ${f.stocks} ${f.stocks === 1 ? 'life' : 'lives'} left`);
+      row.dataset.fighter = String(i);
+      return row;
+    }),
+  );
   resultsButtons();
   renderDuelBoard();
   show('results');
@@ -542,8 +622,17 @@ function resultsButtons() {
   const series = state.series;
   $('again').hidden = online && !state.owner;
   $('again').textContent = series ? (series.over ? 'New series' : 'Next round') : online ? 'Rematch' : 'Play again';
+  // Online: who's left the room, grayed out; no one left to play: no rematch.
+  const standing = online ? state.standing : null;
+  for (const row of $('scores').children) {
+    const gone = !!standing?.left.includes(Number(row.dataset.fighter));
+    row.classList.toggle('gone', gone);
+    const tag = row.querySelector('.tag');
+    if (tag && gone && !tag.textContent.startsWith('Left')) tag.textContent = `Left the room · ${tag.textContent}`;
+  }
+  $('again').disabled = !!standing && !standing.rematch;
   $('toMenu').textContent = online ? (state.owner ? 'Back to lobby' : 'Leave room') : state.botMatch ? 'Back to setup' : 'Menu';
-  $('resultsStatus').textContent = online && !state.owner ? 'Waiting for the room owner…' : '';
+  $('resultsStatus').textContent = standing && !standing.rematch ? 'Everyone else has left: not enough players for a rematch.' : online && !state.owner ? 'Waiting for the room owner…' : '';
 }
 
 $('again').onclick = () => {
@@ -649,7 +738,7 @@ function renderDuelBoard() {
   const gathering = v.phase === 'gather' || v.phase === 'countdown';
   const watching = v.watching.includes(me);
   const undecided = free(me) && !watching;
-  $('duelBtn').disabled = !gathering || !free(me);
+  $('duelBtn').disabled = !gathering || !free(me) || state.standing?.duel === false;
   $('duelWatch').textContent = watching ? 'Stop spectating' : 'Spectate duels';
   $('duelAuto').checked = !v.autoOff.includes(me);
   $('duelNow').hidden = !(state.owner && v.phase === 'gather' && v.duels.length > 0);

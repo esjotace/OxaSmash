@@ -1,13 +1,14 @@
 // One match. Two modes:
 //   local  – this browser runs the rules (solo vs bots, or players sharing this screen)
-//   client – online: sends this player's input to the game server, and draws the state it sends
-//            back slightly in the past (smooth)
+//   client – online: the game server's match, played here too, from the same start and inputs
+//            (rollback: see net/rollback.js)
 import Phaser from 'phaser';
 import { COVER_ART } from './cover.js';
 import { DT, MELEE, GUNS, GRENADES, ITEMS, STORM_PACE } from '../sim/constants.js';
 import { createWorld, step, spawnWeapon, setHealthRule } from '../sim/world.js';
 import { toView } from '../sim/view.js';
-import { NEUTRAL, encodeInput } from '../sim/input.js';
+import { NEUTRAL } from '../sim/input.js';
+import { Rollback } from '../net/rollback.js';
 import { createBot, botInput, configureBot } from '../bots/bot.js';
 import { Controls } from './controls.js';
 import { Spectator } from './spectate.js';
@@ -16,8 +17,50 @@ import { settings } from './settings.js';
 import { SOUNDS } from './audio.js';
 import { STAGES, DEFAULT_STAGE, isStageId } from '../sim/stage.js';
 
-const INTERP_TICKS = 5; // guests draw this far behind the newest state, to smooth out jitter
-const RESEND_MS = 100; // guests resend unchanged input this often anyway
+// A shot someone else fired (a grenade, a thrown weapon, the trident on its chain, money bursting
+// out) often turns up here late (online, once their input arrives: rollback), already well on its
+// way. Drawn instead as setting off from where it started and quickly catching up with where it
+// really is; where it hits isn't changed.
+const LATE_SHOT = { after: 1, ease: 22, max: 600 }; // ticks late to count; catch-up speed (per s); px
+
+// Real art, where it exists (public/art/). Anything missing falls back to the greybox shapes.
+// Loaded by the match (only what isn't already), or ahead of it: see warmUp in game.js.
+export function loadArt(scene) {
+  for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!scene.textures.exists(key)) scene.load.image(key, `art/${key}.png`);
+  if (!scene.textures.exists('village')) scene.load.image('village', 'art/village/tiles.png');
+  // Cloud puffs (smoke, poison, spore patches): animation strips of 64×64 frames.
+  // Controller button pictures: 16×16 frames (see padicons.js).
+  if (!scene.textures.exists('buttons')) scene.load.spritesheet('buttons', 'art/buttons.png', { frameWidth: 16, frameHeight: 16 });
+  // Animated strips: money, the flying card, the chest opening, the banner waving.
+  for (const [k, w, h] of [['cash-coin', 10, 10], ['cash-goldcoin', 16, 16], ['cash-bill', 24, 24], ['cash-diamond', 8, 9], ['card-fly', 24, 24], ['chest-open', 48, 48], ['flag-wave', 48, 48]]) {
+    if (!scene.textures.exists(k)) scene.load.spritesheet(k, `art/${k}.png`, { frameWidth: w, frameHeight: h });
+  }
+  for (const k of ['smoke', 'poison', 'skull', 'spore', 'vortex']) if (!scene.textures.exists(`fx-${k}`)) scene.load.spritesheet(`fx-${k}`, `art/fx/${k}.png`, { frameWidth: 64, frameHeight: 64 });
+  // Sound effects (made by tools/make_sounds.py).
+  for (const key of SOUNDS) if (!scene.cache.audio.exists(key)) scene.load.audio(key, `sounds/${key}.wav`);
+  if (!scene.textures.exists('dungeon')) scene.load.image('dungeon', 'art/dungeon/tiles.png');
+  if (!scene.textures.exists('dungeon-wall')) scene.load.image('dungeon-wall', 'art/dungeon/wall.png');
+  // Characters: idle (32x32 frames), run (64x64), and a single stun pose.
+  for (const c of CHARACTERS) {
+    if (scene.textures.exists(`${c}-idle`)) continue;
+    scene.load.spritesheet(`${c}-idle`, `art/chars/${c}-idle.png`, { frameWidth: 32, frameHeight: 32 });
+    scene.load.spritesheet(`${c}-run`, `art/chars/${c}-run.png`, { frameWidth: 64, frameHeight: 64 });
+    scene.load.image(`${c}-stun`, `art/chars/${c}-stun.png`);
+  }
+  // Building kits: the index (kit.json) lists the pieces; each loads as "<kit>/<piece>".
+  const st = STAGES.warehouse;
+  for (const kit of new Set([...st.kitRuns, ...st.facades].map((r) => r.kit).filter(Boolean))) {
+    if (scene.cache.json.exists(`kit-${kit}`)) continue;
+    scene.load.once(`filecomplete-json-kit-${kit}`, (_key, _type, data) => {
+      for (const name of Object.keys(data.pieces)) {
+        scene.load.image(`${kit}/${name}`, `art/kits/${kit}/${name}.png`);
+        // Optional lit-window overlays: <piece>_lights0.png, _lights1.png...
+        for (let v = 0; v < (data.lights ?? 0); v++) scene.load.image(`${kit}/${name}_lights${v}`, `art/kits/${kit}/${name}_lights${v}.png`);
+      }
+    });
+    scene.load.json(`kit-${kit}`, `art/kits/${kit}/kit.json`);
+  }
+}
 
 export class MatchScene extends Phaser.Scene {
   constructor() {
@@ -33,47 +76,12 @@ export class MatchScene extends Phaser.Scene {
     this.acc = 0;
     this.ended = false;
     this.view = null;
-    this.snaps = [];
-    this.lastSent = '';
-    this.lastSentAt = 0;
+    this.net = null; // online: the match, played here too (rollback)
+    this.lateShots = new Map(); // online: things that flew in late: key -> { x, y } still to catch up
   }
 
-  // Real art, where it exists (public/art/). Anything missing falls back to the greybox shapes.
   preload() {
-    for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!this.textures.exists(key)) this.load.image(key, `art/${key}.png`);
-    if (!this.textures.exists('village')) this.load.image('village', 'art/village/tiles.png');
-    // Cloud puffs (smoke, poison, spore patches): animation strips of 64×64 frames.
-    // Controller button pictures: 16×16 frames (see padicons.js).
-    if (!this.textures.exists('buttons')) this.load.spritesheet('buttons', 'art/buttons.png', { frameWidth: 16, frameHeight: 16 });
-    // Animated strips: money, the flying card, the chest opening, the banner waving.
-    for (const [k, w, h] of [['cash-coin', 10, 10], ['cash-goldcoin', 16, 16], ['cash-bill', 24, 24], ['cash-diamond', 8, 9], ['card-fly', 24, 24], ['chest-open', 48, 48], ['flag-wave', 48, 48]]) {
-      if (!this.textures.exists(k)) this.load.spritesheet(k, `art/${k}.png`, { frameWidth: w, frameHeight: h });
-    }
-    for (const k of ['smoke', 'poison', 'skull', 'spore', 'vortex']) if (!this.textures.exists(`fx-${k}`)) this.load.spritesheet(`fx-${k}`, `art/fx/${k}.png`, { frameWidth: 64, frameHeight: 64 });
-    // Sound effects (made by tools/make_sounds.py).
-    for (const key of SOUNDS) if (!this.cache.audio.exists(key)) this.load.audio(key, `sounds/${key}.wav`);
-    if (!this.textures.exists('dungeon')) this.load.image('dungeon', 'art/dungeon/tiles.png');
-    if (!this.textures.exists('dungeon-wall')) this.load.image('dungeon-wall', 'art/dungeon/wall.png');
-    // Characters: idle (32x32 frames), run (64x64), and a single stun pose.
-    for (const c of CHARACTERS) {
-      if (this.textures.exists(`${c}-idle`)) continue;
-      this.load.spritesheet(`${c}-idle`, `art/chars/${c}-idle.png`, { frameWidth: 32, frameHeight: 32 });
-      this.load.spritesheet(`${c}-run`, `art/chars/${c}-run.png`, { frameWidth: 64, frameHeight: 64 });
-      this.load.image(`${c}-stun`, `art/chars/${c}-stun.png`);
-    }
-    // Building kits: the index (kit.json) lists the pieces; each loads as "<kit>/<piece>".
-    const st = STAGES.warehouse;
-    for (const kit of new Set([...st.kitRuns, ...st.facades].map((r) => r.kit).filter(Boolean))) {
-      if (this.cache.json.exists(`kit-${kit}`)) continue;
-      this.load.once(`filecomplete-json-kit-${kit}`, (_key, _type, data) => {
-        for (const name of Object.keys(data.pieces)) {
-          this.load.image(`${kit}/${name}`, `art/kits/${kit}/${name}.png`);
-          // Optional lit-window overlays: <piece>_lights0.png, _lights1.png...
-          for (let v = 0; v < (data.lights ?? 0); v++) this.load.image(`${kit}/${name}_lights${v}`, `art/kits/${kit}/${name}_lights${v}.png`);
-        }
-      });
-      this.load.json(`kit-${kit}`, `art/kits/${kit}/kit.json`);
-    }
+    loadArt(this);
   }
 
   create() {
@@ -89,7 +97,12 @@ export class MatchScene extends Phaser.Scene {
     this.applySettings();
 
     if (mode === 'client') {
-      room.on('snap', (msg) => this.receiveSnap(msg));
+      // The match runs here too, from how the server made it (see net/rollback.js).
+      this.net = new Rollback(this.cfg.init, you, (events) => this.draw.effects(events));
+      this.view = toView(this.net.world);
+      room.on('match', (msg) => this.net.receive(msg));
+      // (Loaded: the server can start once everyone is.)
+      room.send({ t: 'ready' });
     } else {
       // (Same screen matches can set the weapons in play and the storm's pace.)
       const storm = STORM_PACE[this.cfg.stormPace] ?? {};
@@ -113,7 +126,7 @@ export class MatchScene extends Phaser.Scene {
       this.dropControls();
       this.spectator.destroy();
       if (this.input.mouse?.locked) this.input.mouse.releasePointerLock();
-      if (mode === 'client') room.on('snap', () => {});
+      if (mode === 'client') room.on('match', () => {});
     });
   }
 
@@ -201,10 +214,11 @@ export class MatchScene extends Phaser.Scene {
       for (const c of this.controls) if (c) c.menuPressed = false;
       window.dispatchEvent(new CustomEvent('oxasmash-menu', { detail: { player: opener.scheme, pad: `pad${opener.pad}` } }));
     }
-    if (this.cfg.mode === 'client') this.updateClient(time);
+    if (this.cfg.mode === 'client') this.updateClient(time, delta);
     else if (!this.paused) this.updateLocal(delta);
     this.draw.render(this.view, delta);
-    if (!this.ended && this.view?.phase === 'over' && this.view.timer <= 0) {
+    // (Online, the end comes from the server: see updateClient.)
+    if (this.cfg.mode === 'local' && !this.ended && this.view?.phase === 'over' && this.view.timer <= 0) {
       this.ended = true;
       this.cfg.onEnd(this.view);
     }
@@ -228,65 +242,66 @@ export class MatchScene extends Phaser.Scene {
     return this.bots[i] ? botInput(this.world, i, this.bots[i]) : NEUTRAL;
   }
 
-  receiveSnap(msg) {
-    const v = msg?.v;
-    if (!v || !Array.isArray(v.fighters) || !Array.isArray(v.bullets) || !Array.isArray(v.barrels) || !v.storm || typeof v.tick !== 'number') return;
-    const newest = this.snaps[this.snaps.length - 1];
-    if (newest && v.tick <= newest.v.tick) return;
-    this.snaps.push({ at: performance.now(), v });
-    if (this.snaps.length > 30) this.snaps.shift();
-    if (Array.isArray(msg.e)) this.draw.effects(msg.e.slice(0, 64));
-    // Characters picked mid-match (the renderer ignores anything that isn't one).
-    if (Array.isArray(msg.c)) msg.c.slice(0, 8).forEach((char, i) => this.draw.setChar(i, char));
+  updateClient(time, delta) {
+    const { you, room } = this.cfg;
+    const net = this.net;
+    const read = () => (this.menuOpen ? this.controls[you].idle() : this.controls[you].read(this.view?.fighters[you]));
+    const final = net.frame(delta / 1000, time, read, (msg) => room.send(msg));
+    if (net.chars) net.chars.forEach((char, i) => this.draw.setChar(i, char));
+    // What to draw: the match here, with any correction still being eased out.
+    const offsets = net.ease(delta / 1000);
+    const view = toView(net.world);
+    view.fighters = view.fighters.map((f, i) => (offsets[i].x || offsets[i].y ? { ...f, x: f.x + offsets[i].x, y: f.y + offsets[i].y } : f));
+    view.pings = net.pings;
+    view.waiting = net.newest < 0; // (the server's still waiting for someone's game to load)
+    this.catchUpShots(view, delta / 1000);
+    this.view = view;
+    if (final && !this.ended) {
+      this.ended = true;
+      this.cfg.onEnd(toView(final));
+    }
   }
 
-  updateClient(time) {
-    const { you, room } = this.cfg;
-    // (Only watching: nothing to send.)
-    const input = you < 0 ? null : this.menuOpen ? this.controls[you].idle() : this.controls[you].read(this.view?.fighters[you]);
-    const packed = input && JSON.stringify(encodeInput(input));
-    if (input && (packed !== this.lastSent || time - this.lastSentAt > RESEND_MS)) {
-      room.sendInput(input);
-      this.lastSent = packed;
-      this.lastSentAt = time;
-    }
-    const newest = this.snaps[this.snaps.length - 1];
-    if (!newest) return;
-    const sinceNewest = (performance.now() - newest.at) / 1000 / DT;
-    const renderTick = Math.min(newest.v.tick, newest.v.tick - INTERP_TICKS + sinceNewest);
-    this.view = interpolate(this.snaps, renderTick);
+  // Everything that flew in late (see LATE_SHOT), drawn catching up from where it set off:
+  // shots, thrown weapons and guns, grenades, the trident's head, money.
+  catchUpShots(view, dt) {
+    const seen = new Set();
+    const k = Math.exp(-LATE_SHOT.ease * dt);
+    // How far back to draw it (px), for the thing with this key, starting at (x0, y0) on `born`.
+    const lagOf = (key, x, y, x0, y0, born) => {
+      seen.add(key);
+      let lag = this.lateShots.get(key);
+      if (!lag) {
+        // First seen: late? Then it starts back where it set off.
+        const late = view.tick - born > LATE_SHOT.after;
+        lag = late && Math.hypot(x0 - x, y0 - y) < LATE_SHOT.max ? { x: x0 - x, y: y0 - y } : { x: 0, y: 0 };
+        this.lateShots.set(key, lag);
+      } else {
+        lag.x *= k;
+        lag.y *= k;
+      }
+      return lag;
+    };
+    const shift = (kind) => (b) => {
+      const lag = lagOf(`${kind}${b.id}`, b.x, b.y, b.x0, b.y0, b.born);
+      return lag.x || lag.y ? { ...b, x: b.x + lag.x, y: b.y + lag.y } : b;
+    };
+    view.bullets = view.bullets.map(shift('b'));
+    view.grenades = view.grenades.map(shift('g'));
+    view.fighters = view.fighters.map((f) => {
+      const c = f.chain;
+      if (!c) return f;
+      const lag = lagOf(`c${f.id}:${c.born}`, c.x, c.y, c.x0, c.y0, c.born);
+      return lag.x || lag.y ? { ...f, chain: { ...c, x: c.x + lag.x, y: c.y + lag.y } } : f;
+    });
+    view.loot = (view.loot ?? []).map((m) => {
+      const [id, x, y, look, blink, x0, y0, born] = m;
+      const lag = lagOf(`l${id}`, x, y, x0, y0, born);
+      return lag.x || lag.y ? [id, x + lag.x, y + lag.y, look, blink, x0, y0, born] : m;
+    });
+    for (const key of this.lateShots.keys()) if (!seen.has(key)) this.lateShots.delete(key);
   }
 }
 
 const isLocal = (p) => p.kind === 'kbm' || /^pad[0-3]$/.test(p.kind);
 
-function interpolate(snaps, tick) {
-  let a = snaps[0];
-  let b = null;
-  for (const s of snaps) {
-    if (s.v.tick <= tick) a = s;
-    else {
-      b = s;
-      break;
-    }
-  }
-  if (!b) return a.v;
-  const k = Math.max(0, Math.min(1, (tick - a.v.tick) / (b.v.tick - a.v.tick)));
-  const lerp = (p, q) => p + (q - p) * k;
-  return {
-    ...b.v,
-    fighters: b.v.fighters.map((f, i) => {
-      const prev = a.v.fighters[i];
-      if (!prev || prev.state !== 'ok' || f.state !== 'ok') return f;
-      return { ...f, x: lerp(prev.x, f.x), y: lerp(prev.y, f.y) };
-    }),
-    movers: (b.v.movers ?? []).map((m, i) => {
-      const prev = a.v.movers?.[i];
-      return prev ? [lerp(prev[0], m[0]), m[1], m[2]] : m;
-    }),
-    bullets: b.v.bullets.map((p) => {
-      const prev = a.v.bullets.find((q) => q.id === p.id);
-      return prev ? { ...p, x: lerp(prev.x, p.x), y: lerp(prev.y, p.y) } : p;
-    }),
-  };
-}

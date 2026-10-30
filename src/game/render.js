@@ -1687,7 +1687,7 @@ export class Renderer {
         if (kind && img.visible) img.setTexture(kind).setScale(Math.min(1, 10 / img.frame.height)).setPosition(ax + 4 + k * 11, by + 37);
       });
     });
-    this.stormText.setText(view.phase === 'play' && !view.training ? view.storm.text : '').setColor(view.storm.text === 'FINAL ZONE' ? '#ffccd9' : '#ff7399');
+    this.stormText.setText(view.waiting ? 'WAITING FOR PLAYERS…' : view.phase === 'play' && !view.training ? view.storm.text : '').setColor(view.waiting ? '#d9dcf2' : view.storm.text === 'FINAL ZONE' ? '#ffccd9' : '#ff7399');
     // Announcements: a beep per countdown number; a siren each time the storm starts closing in.
     const count = view.phase === 'countdown' ? Math.ceil(view.timer) : null;
     if (count !== null && count !== this.lastCount) this.sfx.ui('ui-beep', 0.7);

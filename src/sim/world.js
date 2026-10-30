@@ -18,7 +18,6 @@ const using = (what) => (cause = what);
 // crown: who wears the crown (last round's winner), or -1; crownRule: 'show', 'bounty' or 'weight'.
 export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.stocks, seed = 1, countdown = RULES.countdown, storm = {}, training = false, rules = {}, crown = -1, crownRule = 'show' }) {
   const st = getStage(stage);
-  const rng = mulberry32(seed);
   const world = {
     tick: 0,
     stage,
@@ -27,7 +26,7 @@ export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.sto
     phase: countdown > 0 ? 'countdown' : 'play',
     timer: countdown,
     winner: null,
-    rng,
+    rngState: seed >>> 0, // where the world's random numbers are up to (see attachRng)
     fighters: [],
     bullets: [],
     nextBullet: 1,
@@ -45,7 +44,7 @@ export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.sto
     pickups: [], // melee weapons lying around: { id, x, y, weapon }
     pickupTimer: PICKUPS.firstAfter,
     nextPickup: 1,
-    storm: createStorm(st, { ...STORM, ...storm, ...(training ? { startDelay: 1e9 } : {}) }, rng),
+    storm: null, // (made below, with the world's random numbers)
     grenades: [], // thrown grenades: { id, owner, kind, x, y, vx, vy, fuse }
     nextGrenade: 1,
     clouds: [], // smoke, poison and spore patches: { id, kind, x, y, r, t, by, perSecond? }
@@ -64,6 +63,8 @@ export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.sto
     nextLoot: 1,
     events: [], // what happened during the last step, for effects and sound
   };
+  attachRng(world);
+  world.storm = createStorm(st, { ...STORM, ...storm, ...(training ? { startDelay: 1e9 } : {}) }, world.rng);
   // (Each low cover a copy with its own health, standing in for the stage's.)
   const copies = new Map(st.blocks.filter((b) => b.cover).map((b, id) => [b, { ...b, id, hp: (COVER.hpPerTile * b.w) / TILE, max: (COVER.hpPerTile * b.w) / TILE, gone: false, flash: 0 }]));
   world.covers = [...copies.values()];
@@ -214,6 +215,7 @@ function breakFree(world, f) {
 
 // Advance one tick. inputs[i] is fighter i's input (see input.js).
 export function step(world, inputs) {
+  cause = null; // (nothing carries over from another world's tick)
   const st = getStage(world.stage);
   world.events = [];
   world.tick++;
@@ -874,7 +876,7 @@ function fire(world, f, g, power = 1) {
     // (The crystal ball: shots home in, but hit for less.)
     if (f.homing > 0) damage *= ITEMS.crystal.homing.damage;
     world.bullets.push({
-      id: world.nextBullet++, owner: f.id, gun: f.gun, x: sx, y: sy, vx: dx * speed, vy: dy * speed - (g.lift ?? 0), gravity: g.gravity ?? 0, life: g.bulletRange / speed, thrown: false,
+      id: world.nextBullet++, owner: f.id, gun: f.gun, x: sx, y: sy, x0: sx, y0: sy, born: world.tick, vx: dx * speed, vy: dy * speed - (g.lift ?? 0), gravity: g.gravity ?? 0, life: g.bulletRange / speed, thrown: false,
       damage, kb, growth, light, explode: g.explode ?? null, bounces: g.bounces ?? 0, grow: g.bounceGrowth ?? 0, size: 1, look, volley,
       pierce: g.pierce ? [] : null, burn: g.burn ?? 0, stick: !!g.stick, hops: g.hops ?? 0, spore: g.spore ?? null, jackpot: g.jackpot ?? null, homing: f.homing > 0,
     });
@@ -903,7 +905,7 @@ function throwGun(world, f) {
   // (A light gun comes back to you, boomerang-style; see comeBack.)
   const back = GUNS[f.gun].weight === 'light' && !GUNS[f.gun].heavyThrow ? { phase: 'out', t: 0 } : null;
   // (recover: where it stops, it lands on the floor as a pickup: an empty gun.)
-  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.gun, x: o.x, y: o.y, vx: f.aimX * t.speed, vy: f.aimY * t.speed - 60, gravity: t.gravity, life: 1.5, thrown: true, recover: true, ammo: 0, damage: t.damage, kb: t.knockback, growth: t.knockbackGrowth, back });
+  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.gun, x: o.x, y: o.y, x0: o.x, y0: o.y, born: world.tick, vx: f.aimX * t.speed, vy: f.aimY * t.speed - 60, gravity: t.gravity, life: 1.5, thrown: true, recover: true, ammo: 0, damage: t.damage, kb: t.knockback, growth: t.knockbackGrowth, back });
   f.gun = null;
 }
 
@@ -1124,7 +1126,7 @@ function cashBurst(world, at, c, by) {
 function showerCash(world, at, pieces) {
   for (let k = 0; k < pieces; k++) {
     const cash = pickCash(world);
-    world.loot.push({ id: world.nextLoot++, x: at.x, y: at.y, vx: (world.rng() * 2 - 1) * 170, vy: -140 - world.rng() * 170, look: cash.look, value: cash.damage * LOOT.heal, t: 0, landed: false });
+    world.loot.push({ id: world.nextLoot++, x: at.x, y: at.y, x0: at.x, y0: at.y, born: world.tick, vx: (world.rng() * 2 - 1) * 170, vy: -140 - world.rng() * 170, look: cash.look, value: cash.damage * LOOT.heal, t: 0, landed: false });
   }
 }
 
@@ -1546,7 +1548,7 @@ function throwMelee(world, f, m) {
   // (The crystal ball: thrown weapons home in too, for less damage.)
   const homing = f.homing > 0;
   const damage = t.damage * (homing ? ITEMS.crystal.homing.damage : 1);
-  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.melee, x: o.x, y: o.y, vx: f.aimX * t.speed, vy: f.aimY * t.speed - t.lift, gravity: t.gravity, life: recover ? 3 : 2, thrown: true, recover, damage, kb: t.knockback, growth: t.knockbackGrowth, homing });
+  world.bullets.push({ id: world.nextBullet++, owner: f.id, kind: f.melee, x: o.x, y: o.y, x0: o.x, y0: o.y, born: world.tick, vx: f.aimX * t.speed, vy: f.aimY * t.speed - t.lift, gravity: t.gravity, life: recover ? 3 : 2, thrown: true, recover, damage, kb: t.knockback, growth: t.knockbackGrowth, homing });
   // (The cleaver: you throw a spare and keep yours, and wait for the next throw.)
   if (t.keep) f.throwCd = t.cooldown;
   else f.melee = null;
@@ -1558,7 +1560,7 @@ function throwMelee(world, f, m) {
 function throwTrident(world, f, m) {
   const c = m.chain;
   const o = aimOrigin(f);
-  f.chain = { phase: 'out', x: o.x, y: o.y, vx: f.aimX * c.speed, vy: f.aimY * c.speed - c.lift, victim: -1, stuck: 0 };
+  f.chain = { phase: 'out', x: o.x, y: o.y, x0: o.x, y0: o.y, born: world.tick, vx: f.aimX * c.speed, vy: f.aimY * c.speed - c.lift, victim: -1, stuck: 0 };
   f.bladeHold = -1;
   world.events.push({ type: 'throw', id: f.id, x: f.x, y: f.y - 20 });
 }
@@ -2376,7 +2378,7 @@ function useGrenade(world, f, input, press, control) {
 
 function letGo(world, f, x, y, vx, vy, fuse) {
   // (on: the fighter a C4 is stuck to, or -1; stuck: stuck to a wall or floor.)
-  world.grenades.push({ id: world.nextGrenade++, owner: f.id, kind: f.cooking, x, y, vx, vy, fuse, on: -1, stuck: false });
+  world.grenades.push({ id: world.nextGrenade++, owner: f.id, kind: f.cooking, x, y, x0: x, y0: y, born: world.tick, vx, vy, fuse, on: -1, stuck: false });
   f.cook = -1;
   f.cooking = null;
 }
@@ -2668,6 +2670,7 @@ function enforceStormWall(world, st) {
 export function stormStatus(s) {
   const c = s.cfg;
   const t = s.time - c.startDelay;
+  if (t < -3600) return { text: '', next: null }; // (turned off: never comes)
   if (t < 0) return { text: `STORM IN ${Math.ceil(-t)}`, next: t > -10 ? s.zone1 : null };
   if (t < c.firstShrink) return { text: 'STORM CLOSING', next: s.zone1 };
   const t2 = t - c.firstShrink - c.hold;
@@ -2696,6 +2699,21 @@ function circleHitsRect(cx, cy, r, rect) {
   const nx = clamp(cx, rect.x, rect.x + rect.w);
   const ny = clamp(cy, rect.y, rect.y + rect.h);
   return (cx - nx) ** 2 + (cy - ny) ** 2 < r * r;
+}
+
+// The world's random numbers (world.rng()), the same sequence as mulberry32, but where it's up to is
+// kept in the world itself (rngState): a saved copy of the world rolls the same numbers again (see
+// src/sim/snapshot.js). The function itself is hidden (not copied with the world).
+export function attachRng(world) {
+  const rng = () => {
+    world.rngState = (world.rngState + 0x6d2b79f5) >>> 0;
+    let t = world.rngState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  Object.defineProperty(world, 'rng', { value: rng, enumerable: false, configurable: true, writable: true });
+  return world;
 }
 
 export function mulberry32(seed) {
