@@ -16,7 +16,7 @@ import { koLine } from './kolines.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
 import { PLAYER_COLORS, FONT } from './palette.js';
-import { CHARACTERS } from './cast.js';
+import { CHARACTERS, POSES } from './cast.js';
 import { Sfx } from './audio.js';
 
 const PANEL_W = 120;
@@ -45,7 +45,7 @@ export function makeCharacterAnims(scene) {
   for (const c of CHARACTERS) {
     const key = `${c}-fall`;
     if (!scene.textures.exists(key) || !scene.textures.exists(`${c}-stun`) || scene.textures.get(key).frameTotal > 2) continue;
-    const w = scene.textures.get(`${c}-stun`).getSourceImage().width;
+    const w = POSES[c]?.fallW ?? scene.textures.get(`${c}-stun`).getSourceImage().width;
     const tex = scene.textures.get(key);
     const src = tex.getSourceImage();
     for (let k = 0; k < Math.floor(src.width / w); k++) tex.add(k, 0, k * w, 0, w, src.height);
@@ -1277,7 +1277,7 @@ export class Renderer {
   // A character's floating hands: bony for the skeletons, green for the orcs, else the usual.
   handKey(i) {
     const c = this.chars[i] ?? '';
-    const key = c.startsWith('skeleton') ? 'hand-skeleton' : c.startsWith('orc') ? 'hand-orc' : 'hand';
+    const key = c.startsWith('skeleton') ? 'hand-skeleton' : c.startsWith('orc') ? 'hand-orc' : c.startsWith('bugbicho') ? 'hand-bugbicho' : c === 'betowing' ? 'hand-betowing' : 'hand';
     return this.scene.textures.exists(key) ? key : 'hand';
   }
 
@@ -1309,6 +1309,8 @@ export class Renderer {
   drawBody(s, f, i, a, low, x = Math.round(f.x)) {
     const c = this.chars[i];
     s.setOrigin(0.5, 1);
+    // (Feet off-centre in the stun, fall and sleep art: see POSES.)
+    let feet = null;
     if (!f.asleep && this.sleptAt) this.sleptAt[i] = undefined;
     if (f.cat && this.scene.textures.exists(`cat${f.cat}-idle`)) {
       this.catPose(s, f, i);
@@ -1329,10 +1331,12 @@ export class Renderer {
       s.anims.stop();
       if (n > 1) s.setTexture(`${c}-fall`, Math.min(n - 1, Math.floor(((this.anim - since[i]) / FALL_TIME) * n)));
       else s.setTexture(`${c}-sleep`);
+      feet = n > 1 ? (POSES[c]?.fallX ?? POSES[c]?.x) : POSES[c]?.x;
     } else if ((f.stunned || f.hitstun) && this.scene.textures.exists(`${c}-stun`)) {
       // Stunned or reeling from a hit: the weak pose (the death animation's second frame).
       s.anims.stop();
       s.setTexture(`${c}-stun`);
+      feet = POSES[c]?.x;
     } else if (f.dashing || !f.grounded) {
       // Dashing, or in the air: the run sheet's last frame (mid-stride) doubles as the pose.
       s.anims.stop();
@@ -1344,6 +1348,7 @@ export class Renderer {
     const ways = (this.moveWay ??= []);
     if (Math.abs(f.vx ?? 0) > 10) ways[i] = Math.sign(f.vx);
     const way = f.cat || f.animal ? (ways[i] ?? f.facing) : f.facing;
+    if (feet != null) s.setOrigin(way < 0 ? 1 - feet / s.frame.width : feet / s.frame.width, 1);
     s.setVisible(true)
       .setPosition(x, Math.round(f.y))
       .setFlipX(way < 0)

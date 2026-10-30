@@ -9,7 +9,7 @@ import { RULES, GUNS, MELEE, GRENADES, ITEMS } from './sim/constants.js';
 import { describe } from './sim/describe.js';
 import { hasIcon, iconFrame, BUTTONS_PER_ROW, ICON_STYLES } from './game/padicons.js';
 import { STAGES, DEFAULT_STAGE, MIXED, isStageId, rollStage } from './sim/stage.js';
-import { CHARACTERS, pickCast } from './game/cast.js';
+import { CHARACTERS, IDLE_W, pickCast } from './game/cast.js';
 import { startPadNav } from './padnav.js';
 import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
 
@@ -1299,6 +1299,10 @@ const charLabel = (c) => (c ? c.split('-').map((w) => w[0].toUpperCase() + w.sli
 function renderCharacter() {
   const c = deviceSettings(editing.player).character;
   $('charSprite').style.backgroundImage = c ? `url(art/chars/${c}-idle.png)` : 'none';
+  // (Its four idle frames, drawn 3x: as wide as one frame, the sheet four of them; see style.css.)
+  const fw = c ? IDLE_W(c) * 3 : 96;
+  $('charSprite').style.width = `${fw}px`;
+  $('charSprite').style.setProperty('--sheet', `${fw * 4}px`);
   $('charSprite').textContent = c ? '' : '?';
   $('charName').textContent = charLabel(c);
 }

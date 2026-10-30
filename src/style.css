@@ -637,10 +637,13 @@ kbd {
 }
 
 /* A character's idle animation, from its sprite sheet (4 frames of 32 px, shown 3× big). */
+/* (Idle sheets: 4 frames, drawn 3x (--sheet: the sheet's width so, set with the frame's width in
+   main.js); taller ones keep their headroom, feet at the bottom.) */
 .char-sprite {
   width: 96px;
-  height: 96px;
-  background-size: 384px 96px;
+  height: 120px;
+  background-size: var(--sheet, 384px) auto;
+  background-position: 0 100%;
   background-repeat: no-repeat;
   image-rendering: pixelated;
   animation: char-idle 0.67s steps(4) infinite;
@@ -652,7 +655,7 @@ kbd {
 
 @keyframes char-idle {
   to {
-    background-position: -384px 0;
+    background-position: calc(-1 * var(--sheet, 384px)) 100%;
   }
 }
 
