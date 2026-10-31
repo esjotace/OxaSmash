@@ -181,10 +181,18 @@ export class MatchScene extends Phaser.Scene {
   applySettings() {
     this.sound.volume = settings.volume.master;
     if (this.controls) {
-      const cursors = this.controls.map((c) => c?.cursor);
+      // (The new controls carry on from the old ones: the cursor, the touch lock, and the press
+      // counts above all. Counts starting again from 0 would read as every button pressed at once:
+      // a shot, a swing, a grenade... on closing the menu.)
+      const old = this.controls.map((c) => c && { cursor: c.cursor, counts: c.counts, seenKp: c.seenKp, lockId: c.lockId });
       this.dropControls();
       this.makeControls();
-      this.controls.forEach((c, i) => c && cursors[i] && Object.assign(c.cursor, cursors[i]));
+      this.controls.forEach((c, i) => {
+        if (!c || !old[i]) return;
+        Object.assign(c.cursor, old[i].cursor);
+        Object.assign(c.counts, old[i].counts);
+        Object.assign(c, { seenKp: old[i].seenKp, lockId: old[i].lockId });
+      });
     }
   }
 
@@ -199,7 +207,6 @@ export class MatchScene extends Phaser.Scene {
     return this.menuOpen && this.cfg.mode === 'local';
   }
 
-  // A player on this screen picked another character: the one on that device (slot: kbm, padN).
   // Training, from the menu: drop a weapon in front of the player.
   trainingSpawn(weapon) {
     if (!this.world?.training) return;
@@ -229,14 +236,6 @@ export class MatchScene extends Phaser.Scene {
       else setHealthRule(this.world, i, health);
     });
     this.view = toView(this.world);
-  }
-
-  setCharacter(char, slot = 'kbm') {
-    const own = this.cfg.roster.findIndex((p) => p.kind === slot);
-    const i = this.cfg.mode !== 'local' ? this.cfg.you : own >= 0 ? own : this.draw.locals[0];
-    if (i < 0) return; // (only watching)
-    this.draw.setChar(i, char);
-    if (this.cfg.mode === 'client') this.cfg.room.sendChar(char);
   }
 
   update(time, delta) {

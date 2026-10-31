@@ -2,14 +2,14 @@
 // meleeHeld, grenadeHeld; up: the stick, the D-pad or the hide key held up, for DI); presses are counters (jp jump, sp shoot, mp melee, dp down, rp reload,
 // hp hide, ep pick up, gp grenade, xp dodge, cp cycle grenades, kp jab) that go up by one per press, so a
 // quick click is never lost between network packets. ax/ay is the aim direction (-1..1);
-// 0,0 means "the way I'm facing".
+// 0,0 means "the way I'm facing". touch: playing on the touch controls right now (a wider grab).
 
-export const NEUTRAL = Object.freeze({ mx: 0, down: false, up: false, jump: false, crouch: false, shoot: false, block: false, meleeHeld: false, grenadeHeld: false, ax: 0, ay: 0, jp: 0, sp: 0, mp: 0, dp: 0, rp: 0, hp: 0, ep: 0, gp: 0, xp: 0, cp: 0, kp: 0 });
+export const NEUTRAL = Object.freeze({ mx: 0, down: false, up: false, jump: false, crouch: false, shoot: false, block: false, meleeHeld: false, grenadeHeld: false, touch: false, ax: 0, ay: 0, jp: 0, sp: 0, mp: 0, dp: 0, rp: 0, hp: 0, ep: 0, gp: 0, xp: 0, cp: 0, kp: 0 });
 
 export const bump = (count) => (count + 1) & 0xff;
 
 export function encodeInput(i) {
-  const flags = (i.down ? 1 : 0) | (i.jump ? 2 : 0) | (i.shoot ? 4 : 0) | (i.block ? 8 : 0) | (i.crouch ? 16 : 0) | (i.meleeHeld ? 32 : 0) | (i.grenadeHeld ? 64 : 0) | (i.up ? 128 : 0);
+  const flags = (i.down ? 1 : 0) | (i.jump ? 2 : 0) | (i.shoot ? 4 : 0) | (i.block ? 8 : 0) | (i.crouch ? 16 : 0) | (i.meleeHeld ? 32 : 0) | (i.grenadeHeld ? 64 : 0) | (i.up ? 128 : 0) | (i.touch ? 256 : 0);
   return [i.mx, flags, i.jp, i.sp, i.mp, i.dp, i.rp, Math.round(i.ax * 100), Math.round(i.ay * 100), i.hp, i.ep, i.gp ?? 0, i.xp ?? 0, i.cp ?? 0, i.kp ?? 0];
 }
 
@@ -17,7 +17,7 @@ export function encodeInput(i) {
 export function decodeInput(a) {
   if (!Array.isArray(a) || a.length !== 15) return null;
   const n = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.trunc(v))) : 0);
-  const flags = n(a[1], 0, 255);
+  const flags = n(a[1], 0, 511);
   return {
     mx: n(a[0], -1, 1),
     down: (flags & 1) !== 0,
@@ -28,6 +28,7 @@ export function decodeInput(a) {
     meleeHeld: (flags & 32) !== 0,
     grenadeHeld: (flags & 64) !== 0,
     up: (flags & 128) !== 0,
+    touch: (flags & 256) !== 0,
     jp: n(a[2], 0, 255),
     sp: n(a[3], 0, 255),
     mp: n(a[4], 0, 255),

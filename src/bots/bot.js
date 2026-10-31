@@ -5,6 +5,10 @@ import { bump } from '../sim/input.js';
 import { DT, FIGHTER, GUNS, GRENADES, GRENADE, GUN_THROW, DASH } from '../sim/constants.js';
 import { center, aimOrigin, gunOrigin, lineOfSight, groundBelow, respawnPoint, solids, mulberry32, sparesOf } from '../sim/world.js';
 
+// Walking off a ledge toward someone below: still on it after this many ticks (a wall at that
+// edge), try the other edge.
+const DESCEND_GIVE_UP = 150;
+
 const LEVELS = {
   easy: { think: 0.45, aimError: 0.22, fireGap: 0.7, meleeGap: 0.6 },
   normal: { think: 0.25, aimError: 0.12, fireGap: 0.4, meleeGap: 0.35 },
@@ -46,6 +50,8 @@ export function createBot(level = 'normal', seed = 1) {
     detour: 0,
     climb: null,
     descend: null,
+    descendAt: 0, // (when that started, and the floor's other edge, if this one leads nowhere)
+    descendAlt: null,
     waitSince: null,
     wantJump: false,
     wantDrop: false,
@@ -72,6 +78,10 @@ export function botInput(world, id, bot) {
       decide(world, f, bot);
     }
     out.mx = bot.move;
+    if (bot.wantDash) {
+      if (bot.move) press('xp');
+      bot.wantDash = false;
+    }
     if (bot.wantJump) {
       press('jp');
       bot.wantJump = false;
@@ -126,10 +136,16 @@ function decide(world, f, bot) {
   const t = nearestEnemy(world, f);
   bot.target = t ? t.id : -1;
   bot.cross = 0;
-  // Committed to walking off a ledge: keep going until we're off it.
+  // Committed to walking off a ledge: keep going until we're off it. Still on it after
+  // DESCEND_GIVE_UP (a wall at that edge): the floor's other edge; that too: hop, and think again.
   if (bot.descend !== null) {
-    if (f.grounded) return;
-    bot.descend = null;
+    if (!f.grounded) bot.descend = null;
+    else if (world.tick - bot.descendAt < DESCEND_GIVE_UP) return;
+    else {
+      [bot.descend, bot.descendAlt, bot.descendAt] = [bot.descendAlt, null, world.tick];
+      if (bot.descend !== null) return;
+      bot.wantJump = true;
+    }
   }
   const plan = bot.climb;
   // Mid-jump on a climb: see it through (re-planned once we land).
@@ -171,7 +187,11 @@ function decide(world, f, bot) {
   const near = armed ? 70 : 0;
   const far = armed ? 200 : 14;
   const r = bot.rng;
-  if (Math.abs(dx) > far) bot.move = Math.sign(dx);
+  if (Math.abs(dx) > far) {
+    bot.move = Math.sign(dx);
+    // Far off, on the ground with the stamina to spare: dash, and keep going, into a run (RUN).
+    if (Math.abs(dx) > far + 140 && f.grounded && f.run < 0 && f.dash <= 0 && f.stamina >= 0.9 && r() < 0.5) bot.wantDash = true;
+  }
   else if (Math.abs(dx) < near && r() < 0.6) bot.move = -Math.sign(dx);
   else bot.move = r() < 0.5 ? 0 : Math.sign(dx) * (r() < 0.5 ? 1 : -1);
   // No clear shot at them on this level (barrels, a wall in the way; cover doesn't count, it gets
@@ -191,7 +211,8 @@ function decide(world, f, bot) {
     if (floor) {
       const edges = [floor.x - 10, floor.x + floor.w + 10];
       const open = edges.filter(reachable);
-      bot.descend = (open.length ? open : edges).sort((a, b) => Math.abs(a - t.x) - Math.abs(b - t.x))[0];
+      const [first, other] = (open.length ? open : edges).sort((a, b) => Math.abs(a - t.x) - Math.abs(b - t.x));
+      Object.assign(bot, { descend: first, descendAlt: other ?? null, descendAt: world.tick });
     }
     bot.waitSince = null;
     return;
@@ -422,11 +443,10 @@ function attack(world, f, bot, out, press) {
       out.ax = Math.sign(c.x - o.x) || f.facing;
       out.ay = -0.3;
     }
-    // Up close: melee (the trident, in the gun slot, with the shoot button). Hurt targets get the
-    // heavy straight away (to launch them); otherwise usually a string: a jab, then the heavy (or a
-    // shot, with a loaded gun) pressed during it, to come out as soon as the jab has hit.
-    if (f.blade) press('sp');
-    else if (t.damage > 90 || bot.rng() < 0.3) press('mp');
+    // Up close: melee. Hurt targets get the heavy straight away (to launch them); otherwise
+    // usually a string: a jab, then the heavy (or a shot, with a loaded gun) pressed during it, to
+    // come out as soon as the jab has hit.
+    if (t.damage > 90 || bot.rng() < 0.3) press('mp');
     else {
       press('kp');
       bot.follow = { key: f.hasGun && f.ammo > 0 && bot.rng() < 0.4 ? 'sp' : 'mp', in: 0.06 };

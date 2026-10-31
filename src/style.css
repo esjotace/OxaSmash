@@ -1179,3 +1179,260 @@ kbd {
 .players li.gone .who {
   text-decoration: line-through;
 }
+
+/* ---- Phones and tablets ------------------------------------------------------------------ */
+
+/* In a match: no text selection, long-press menu ("Copy, Translate...") or zooming from touches. */
+body.in-match,
+#game,
+#touch {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#game,
+#touch {
+  touch-action: none;
+}
+
+.options-btn {
+  align-self: end;
+}
+
+/* The on-screen controls (src/game/touch.js): over the game, under the Menu button and menus. */
+#touch {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  opacity: var(--touch-opacity, 0.6);
+}
+
+.quit {
+  z-index: 10;
+}
+
+.t-btn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid rgba(238, 240, 255, 0.55);
+  background: rgba(16, 19, 38, 0.55);
+  color: var(--text);
+  font-family: var(--display);
+  line-height: 1;
+  text-align: center;
+  transition: transform 0.06s;
+}
+
+.t-btn.aim {
+  border-color: rgba(142, 240, 255, 0.75);
+}
+
+.t-btn.on {
+  background: rgba(142, 240, 255, 0.35);
+  transform: scale(0.94);
+}
+
+.t-stick {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid rgba(238, 240, 255, 0.35);
+  background: rgba(16, 19, 38, 0.3);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.t-stick.on {
+  opacity: 1;
+}
+
+.t-knob {
+  position: absolute;
+  left: 25%;
+  top: 25%;
+  width: 50%;
+  height: 50%;
+  border-radius: 50%;
+  background: rgba(238, 240, 255, 0.5);
+}
+
+/* Held upright in a match: ask for sideways. */
+#rotate {
+  display: none;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  body.in-match #rotate {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    text-align: center;
+    background: var(--bg);
+    font-family: var(--display);
+  }
+}
+
+.rotate-phone {
+  width: 44px;
+  height: 76px;
+  margin: 0 auto 16px;
+  border: 4px solid var(--accent);
+  border-radius: 10px;
+  animation: rotate-phone 2s ease-in-out infinite;
+}
+
+@keyframes rotate-phone {
+  0%,
+  30% {
+    transform: rotate(0);
+  }
+  60%,
+  100% {
+    transform: rotate(-90deg);
+  }
+}
+
+/* Placing the buttons: over everything (the menus included), at full strength, on a dim screen. */
+#touch.editing {
+  z-index: 25;
+  opacity: 1;
+  background: rgba(6, 8, 18, 0.8);
+}
+
+#touch.editing .t-btn {
+  cursor: grab;
+}
+
+.t-btn.picked {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(255, 207, 107, 0.35);
+}
+
+.t-edit {
+  display: none;
+}
+
+#touch.editing .t-edit {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: min(640px, calc(100% - 16px));
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+/* The touch controls hide outside a match and under menus (they'd swallow the menus' taps). */
+body:not(.in-match) #touch:not(.editing),
+body.menu-open #touch:not(.editing) {
+  display: none !important;
+}
+
+/* Short screens (a phone held sideways): menus tighter, the tabs one row that stays at the top,
+   settings two to a row. */
+@media (max-height: 520px) {
+  .screen,
+  .game-menu {
+    padding: 8px;
+  }
+
+  .panel {
+    padding: 14px 18px;
+    border-left-width: 5px;
+  }
+
+  .panel h2 {
+    font-size: 1.4rem;
+  }
+
+  .row {
+    margin: 8px 0;
+  }
+
+  .btn {
+    padding: 6px 14px;
+  }
+
+  input,
+  select {
+    padding: 6px 10px;
+  }
+
+  /* (Room on either side to tap outside and close it.) */
+  .menu-panel {
+    width: min(760px, calc(100% - 96px));
+    max-height: calc(100vh - 16px);
+    max-height: calc(100dvh - 16px);
+    gap: 10px;
+    padding-top: 0;
+  }
+
+  .menu-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 10px 0 8px;
+    margin-bottom: -4px;
+    background: var(--panel);
+  }
+
+  .menu-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: none;
+    font-size: 0.85rem;
+    padding: 4px 12px;
+  }
+
+  .menu-for {
+    order: -1;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    padding-top: 10px;
+  }
+
+  .menu-page {
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+    gap: 8px 16px;
+  }
+
+  /* (Everything but single settings takes the whole width.) */
+  .menu-page > :not(.field):not(.slider):not(.check) {
+    grid-column: 1 / -1;
+  }
+
+  .slider {
+    grid-template-columns: 90px 1fr;
+  }
+
+  .bind-list {
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+    gap: 6px 16px;
+  }
+
+  .bind-list .btn {
+    min-width: 96px;
+  }
+
+  .char-sprite {
+    transform: scale(0.75);
+  }
+}

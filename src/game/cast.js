@@ -27,7 +27,7 @@ export const CHARACTERS = [
 
 // Names that can't be read off the id (which is the name, words capitalised: see charLabel in
 // main.js).
-export const CHAR_NAMES = { 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)', jrazor: 'JRazor' };
+export const CHAR_NAMES = { turtle: 'Saoturtle', 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)', jrazor: 'JRazor' };
 
 // The characters with hands of their own (public/art/hand-<name>.png, in their skin or gloves;
 // the plain-coloured ones from tools/hand_tints.py); the rest: the skeletons' and orcs' (by

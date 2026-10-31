@@ -153,7 +153,7 @@ export const HOLD = { light: 0.56, heavy: 0.38, special: 0.68 };
 
 // Accuracy: the spread is multiplied by `crouch` crouching, `still` standing still, `moving`
 // while walking or running, `air` in the air, plus some degrees more when moving or in the air.
-export const ACCURACY = { crouch: 0.15, still: 0.4, moving: 1.5, air: 1.8, movingExtra: 2, airExtra: 3 };
+export const ACCURACY = { crouch: 0.15, still: 0.4, moving: 1.5, air: 1.8, movingExtra: 2, airExtra: 3, run: 1.8, runExtra: 3 };
 // An empty gun with no magazines left is thrown (any gun): it tumbles and hits like a brick.
 // (Hold the trigger `hold` s to wind up the throw, then let go; a tap just clicks, so you can keep
 // the empty gun.) A light gun (not one marked heavyThrow: the big ones) that hits an enemy bounces
@@ -235,8 +235,6 @@ export const STRIKE = {
 // swing (no arc): drawn back in the wind-up, then shot out `travel` px to `reach` while it hits
 // (by default from 40% of the reach).
 // hitSound: what a landed hit sounds like: cut, stab or blunt.
-// replacesGun: it goes in the gun slot (dropping your gun) and the shoot button swings it; the
-// melee button still punches, or swings your melee weapon.
 // Light weapons in the melee slot can be thrown (LIGHT_THROW, or the weapon's own `throw`): hold
 // the melee button. The throw pushes (their way to finish someone off); the weapon lands where it
 // stops and lies there as a pickup to go get back. `recover: false` throws are gone for good.
@@ -273,8 +271,9 @@ export const MELEE = {
     reach: 12, radius: 8, arc: 50, startup: 0.02, active: 0.06, recovery: 0.08, lunge: 70,
     // From behind: double damage, and it pushes (light weapons otherwise don't).
     backstab: { damageMul: 2, knockback: 220, knockbackGrowth: 2.5 },
-    // Made for throwing: faster and flatter than other light weapons.
-    throw: { ...LIGHT_THROW, holdToThrow: 0.2, speed: 600, lift: 20, gravity: 300, damage: 6 },
+    // Made for throwing: faster and flatter than other light weapons. Like the cleaver, you throw
+    // a spare and keep yours, and wait `cooldown` s to throw again.
+    throw: { ...LIGHT_THROW, speed: 600, lift: 20, gravity: 300, damage: 6, keep: true, cooldown: 2.5, recover: false },
     heavy: { pushes: true, damage: 6, knockback: 190, knockbackGrowth: 2.3, arc: 70, startup: 0.05, active: 0.08, recovery: 0.14 },
   },
   machete: {
@@ -290,11 +289,12 @@ export const MELEE = {
     charge: { time: 0.4, dash: 520, launch: { knockback: 300, knockbackGrowth: 4.2 } },
     heavy: { pushes: true, damage: 9, knockback: 210, knockbackGrowth: 2.6, arc: 75, startup: 0.09, active: 0.12, recovery: 0.2 },
   },
-  // In the gun slot. Tap: a long thrust with a moderate push. Hold: throw it on its chain, in an
-  // arc. Hit someone and they're stunned and reeled in to melee range; miss and it's reeled back
-  // to you. Until it's back you stand there holding the chain: no moving, attacking or blocking.
+  // Tap: a long thrust with a moderate push. Hold: throw it on its chain, in an arc (it goes the
+  // moment the hold reaches `holdToThrow`). Hit someone and they're stunned and reeled in to melee
+  // range; miss and it's reeled back to you. Until it's back you stand there holding the chain: no
+  // moving, attacking or blocking.
   trident: {
-    name: 'Trident', weight: 'heavy', replacesGun: true, hitSound: 'stab',
+    name: 'Trident', weight: 'heavy', hitSound: 'stab',
     // A long, narrow jab that's hard to land, so it pushes hard.
     damage: 8, knockback: 250, knockbackGrowth: 3.6,
     reach: 40, radius: 8, arc: 0, thrust: true, startup: 0.08, active: 0.1, recovery: 0.22, lunge: 40,
@@ -518,12 +518,18 @@ for (const [key, m] of [['fists', STRIKE], ...Object.entries(MELEE)]) {
 // their slot).
 export const PICKUPS = {
   every: 8, // seconds between new pickups
-  max: 4, // at most this many lying around at once
+  // At most this many of each lying around at once: weapons (guns and melee weapons), grenades,
+  // items. (What a knocked-out fighter drops doesn't count: see DROPS.)
+  caps: { weapon: 4, grenade: 4, item: 4 },
   firstAfter: 4,
   shrineEvery: 6, // a weapon shrine gets a new weapon this long after its last one is taken
   // What appears: the share of melee weapons, guns (never the pistol) and grenades.
   mix: { melee: 4, gun: 4, grenade: 3, item: 3 },
-  reach: 16, // how close you need to be to grab one
+  reach: 16, // how close you need to be to grab one (across)
+  reachY: 24, // (and up or down)
+  // Playing on a touch screen: a wider grab (a thumb on a stick stops less precisely than a key).
+  touchReach: 26,
+  touchReachY: 32,
 };
 
 // Items: pickups that aren't weapons.
@@ -536,6 +542,12 @@ export const PICKUPS = {
 //   wish: the genie lamp, rubbed for `rub` s, then a WISH.
 //   homing: the crystal ball: for `time` s your shots home in on the nearest enemy (turning up to
 //     `turn` rad/s) but hit for `damage` of their damage.
+// A knocked-out fighter's weapons (a gun other than the pistol, with the rounds it had; their melee
+// weapon; their grenades) float down into the middle of what's left of the arena: somewhere within
+// `range` px of the storm's centre (so the middle is where to go fishing), `spread` px apart, from
+// `height` px up at `fallSpeed` px/s. Landed, they last `life` s (blinking for the last `blink`).
+export const DROPS = { range: 110, spread: 26, height: 140, fallSpeed: 70, life: 10, blink: 2 };
+
 export const ITEMS = {
   apple: { name: 'Apple', heal: 10 },
   drumstick: { name: 'Drumstick', heal: 25 },
@@ -678,6 +690,14 @@ export const PORTAL = { cooldown: 0.8, w: 32, h: 56, apart: 320, air: 200 };
 // by bullets, melee or explosions (spikes, crushers and the storm still get you).
 // di: holding up or down tilts the dash by this many degrees (on the ground, only up).
 export const DASH = { speed: 380, time: 0.2, iframes: 0.14, recharge: 2.5, cost: 0.5, di: 45 };
+
+// Running: a dash on the ground, still holding that way as it ends, carries on as a run at `speed`
+// (walking is FIGHTER.runSpeed). The first `free` s cost nothing; after that it drains `drain` of
+// the stamina bar a second, and ends when the bar's empty. The bar doesn't refill while running.
+// It ends on letting go or turning around, crouching, blocking, a rooted swing, a hit, or running
+// into a wall; a jump
+// keeps it (and its speed). Shots fired on the run spread as in the air (ACCURACY.run).
+export const RUN = { speed: 200, free: 1.5, drain: 0.3 };
 
 // Combos. A melee hit that lands lets you cut the rest of that swing short with a jump or a dash
 // (cancel), gives back your air jump, and makes your next dash free (within `freeDash` s); a swing

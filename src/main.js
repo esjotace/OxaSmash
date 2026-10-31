@@ -11,7 +11,8 @@ import { hasIcon, iconFrame, BUTTONS_PER_ROW, ICON_STYLES } from './game/padicon
 import { STAGES, DEFAULT_STAGE, MIXED, isStageId, rollStage } from './sim/stage.js';
 import { CHARACTERS, CHAR_NAMES, IDLE_W, IDLE_H, pickCast } from './game/cast.js';
 import { startPadNav } from './padnav.js';
-import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
+import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, DEVICE_SLOTS, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
+import { touchInput, TOUCH_SCREEN } from './game/touch.js';
 
 // A fresh random character for each player, every match; players who picked one (pref) get it.
 function cast(roster) {
@@ -57,6 +58,8 @@ const crowned = (roster) => roster.map((p) => ({ ...p, crowned: !!state.crownNam
 // The in-game menu (see below): whether it's up, when the browser last let go of a captured mouse
 // (it does on Esc), and a binding being changed ({ kind: 'key' | 'pad', action }).
 let menuOpen = false;
+// The menu opened from the main menu's Options button (settings only: no match to resume or leave).
+let optionsMode = false;
 let mouseFreedAt = 0;
 let waiting = null;
 // Whose settings the menu changes: the player (their device's slot, for the character) and the
@@ -86,6 +89,9 @@ function show(id) {
   if (id === 'menu') roomList.start();
   else roomList.stop();
   $('quit').hidden = id !== null;
+  // (In a match: no text selection or long-press menu on phones, and the "turn sideways" screen.)
+  document.body.classList.toggle('in-match', id === null);
+  touchInput.release(); // (the touch controls hide outside a match: nothing stays held)
   // Leaving the match (results, menus): close the in-game menu and let go of the mouse.
   if (id !== null) {
     closeMenu();
@@ -141,6 +147,8 @@ const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['dungeon', 'Dungeon'], ['vill
 
 // extra: { rules, stormPace } for Same screen matches.
 function playLocal(roster, stocks, stage = MIXED, training = false, extra = {}) {
+  // (Each player on this screen: the character picked on their device now, rematches included.)
+  roster = roster.map((p) => (p.kind === 'kbm' || p.kind.startsWith('pad') ? { ...p, pref: deviceSettings(p.kind).character } : p));
   // (A stage without a storm, unless the rules set one.)
   if (!extra.stormPace && STAGES[stage]?.noStorm) extra = { ...extra, stormPace: 'off' };
   state.role = null;
@@ -172,12 +180,11 @@ function playTraining() {
 // ---- Performance log (?perf) ------------------------------------------------------
 // In the in-game menu: copy the log (to paste it somewhere), or start measuring again from now.
 $('perfBox').hidden = !PERF;
-$('perfCopy').onclick = async () => {
-  const text = perfLog();
+// Text to the clipboard (or, without clipboard access, the old way: through a hidden text box).
+async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    // (No clipboard access: copy the old way, through a hidden text box.)
     const box = document.createElement('textarea');
     box.value = text;
     document.body.append(box);
@@ -185,6 +192,11 @@ $('perfCopy').onclick = async () => {
     document.execCommand('copy');
     box.remove();
   }
+}
+
+$('perfCopy').onclick = async () => {
+  const text = perfLog();
+  await copyText(text);
   $('perfNote').textContent = `Copied (${text.split('\n').length} lines). Paste it to Claude.`;
 };
 $('perfRestart').onclick = () => {
@@ -195,6 +207,9 @@ $('perfRestart').onclick = () => {
 // ---- Main menu ----------------------------------------------------------------
 // The modes are slanted bars, one open at a time; a closed bar's buttons and fields can't be
 // reached (inert), with the mouse, the keyboard or a controller.
+// (Phones: no Same screen. A phone is a touch screen whose short side is under 600 px.)
+const PHONE = TOUCH_SCREEN && Math.min(screen.width, screen.height) < 600;
+if (PHONE) $('playLocal').closest('.bar').hidden = true;
 const menuBars = [...document.querySelectorAll('#menu .bar')];
 function openBar(bar) {
   for (const b of menuBars) {
@@ -229,6 +244,7 @@ function renderBotLobby() {
   $('botTitle').textContent = solo ? 'Solo' : 'Bot match';
   $('botHint').textContent = solo ? 'You against the bots. Add or remove bots, pick each one’s level, the stage and the rules.' : 'Set up the bots and watch them fight. ←/→ switch who the camera follows, Space for a free camera, ↑/↓ zoom.';
   $('botStart').textContent = solo ? 'Play' : 'Watch';
+  $('botChar').hidden = !solo; // (Bot match: only bots, nobody to pick for)
   // (Solo: you first, then the bots.)
   const you = solo ? [playerRow(myName(), 0, 'You')] : [];
   $('botList').replaceChildren(
@@ -1028,6 +1044,8 @@ const inMatchNow = () => !$('quit').hidden;
 function openMenu(opener) {
   if (!inMatchNow() || menuOpen) return;
   menuOpen = true;
+  setMenuMode(false);
+  menuShown(true);
   const players = state.onScreen.length ? state.onScreen : [{ name: myName(), kind: 'kbm' }];
   const first = players.find((p) => p.kind === 'kbm') ?? players[0];
   editing = opener ?? { player: first.kind, pad: first.kind === 'kbm' ? 'pad0' : first.kind };
@@ -1039,9 +1057,42 @@ function openMenu(opener) {
   // The Training and Dummies tabs: only in training.
   const training = !state.role && !!state.lastLocal?.training;
   for (const t of document.querySelectorAll('.tab[data-training]')) t.hidden = !training;
-  if (!training && document.querySelector('.tab.on')?.hidden) document.querySelector('.tab[data-tab="general"]').click();
+  for (const t of document.querySelectorAll('.tab[data-options]')) t.hidden = true;
+  if (document.querySelector('.tab.on')?.hidden) document.querySelector('.tab[data-tab="general"]').click();
   refreshMenu();
   gameModule?.then((m) => m.setMenu(true));
+}
+
+// Options, from the main menu: the same menu, for whichever device's settings you pick.
+function openOptions() {
+  if (inMatchNow() || menuOpen) return;
+  menuOpen = true;
+  setMenuMode(true);
+  menuShown(true);
+  editing = { player: 'kbm', pad: 'pad0' };
+  $('menuFor').replaceChildren(...DEVICE_SLOTS.map((slot) => new Option(deviceLabel(slot), slot, false, slot === 'kbm')));
+  $('menuFor').disabled = false;
+  for (const t of document.querySelectorAll('.tab[data-training]')) t.hidden = true;
+  for (const t of document.querySelectorAll('.tab[data-options]')) t.hidden = false;
+  if (document.querySelector('.tab.on')?.hidden) document.querySelector('.tab[data-tab="general"]').click();
+  $('gameMenu').hidden = false;
+  refreshMenu();
+}
+$('optionsBtn').onclick = openOptions;
+
+// A menu's up: the touch controls hide under it (and let go of anything held) until it closes.
+function menuShown(open) {
+  document.body.classList.toggle('menu-open', open);
+  touchInput.release();
+}
+
+// In a match or from Options: what the first page offers, and the hint at the bottom.
+function setMenuMode(options) {
+  optionsMode = options;
+  $('resume').textContent = options ? 'Close' : 'Resume';
+  $('leaveMatch').hidden = options;
+  $('pausedNote').hidden = options;
+  $('menuHint').textContent = TOUCH_SCREEN ? '' : options ? 'Esc closes this menu.' : 'Esc closes this menu. Click the game to capture the mouse again.';
 }
 
 function closeMenu() {
@@ -1049,6 +1100,8 @@ function closeMenu() {
   stopWaiting();
   menuOpen = false;
   $('gameMenu').hidden = true;
+  menuShown(false);
+  if (optionsMode) renderCharButton();
   gameModule?.then((m) => {
     m.applySettings();
     m.setMenu(false);
@@ -1056,6 +1109,18 @@ function closeMenu() {
 }
 
 $('quit').onclick = () => openMenu();
+
+// A click or tap on the dim area around a menu closes it: pressed and let go there (dragging a
+// slider and letting go outside doesn't count), and not while a key or button is being picked.
+function closeOnBackdrop(el, close) {
+  let downOn = null;
+  el.addEventListener('pointerdown', (e) => (downOn = e.target));
+  el.addEventListener('click', (e) => {
+    if (e.target === el && downOn === el && !waiting && !ui.rebinding) close();
+  });
+}
+closeOnBackdrop($('gameMenu'), () => closeMenu());
+closeOnBackdrop($('duelPick'), () => ($('duelPick').hidden = true));
 // Switch whose settings to change.
 $('menuFor').onchange = () => {
   const slot = $('menuFor').value;
@@ -1143,6 +1208,8 @@ function refreshMenu() {
   runPadLive();
   for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['volAnnouncer', 'announcer']]) $(id).value = settings.volume[key];
   $('graphics').value = settings.graphics;
+  $('cameraLean').checked = settings.cameraLean;
+  renderTouch();
   renderCharacter();
   renderBindings();
   renderTraining();
@@ -1285,6 +1352,56 @@ $('graphics').onchange = () => {
   $('graphicsNote').textContent = 'Applies the next time the game loads (reload the page).';
 };
 
+$('cameraLean').onchange = () => {
+  settings.cameraLean = $('cameraLean').checked;
+  saveSettings();
+};
+
+// The touch controls: saved and applied right away.
+function renderTouch() {
+  const t = settings.touch;
+  $('touchShow').value = t.show;
+  $('touchSwap').value = t.swap ? 'swap' : '';
+  $('touchSize').value = String(t.size);
+  $('touchOpacity').value = String(t.opacity);
+  $('touchAssist').checked = t.assist;
+  $('touchFull').checked = t.fullscreen;
+  $('touchMeleeAim').value = t.meleeAim;
+  $('touchHoldFire').checked = t.holdFire;
+  $('touchFocus').checked = t.focus;
+}
+function touchChanged() {
+  Object.assign(settings.touch, {
+    show: $('touchShow').value,
+    swap: $('touchSwap').value === 'swap',
+    size: Number($('touchSize').value),
+    opacity: Number($('touchOpacity').value),
+    assist: $('touchAssist').checked,
+    fullscreen: $('touchFull').checked,
+    meleeAim: $('touchMeleeAim').value,
+    holdFire: $('touchHoldFire').checked,
+    focus: $('touchFocus').checked,
+  });
+  saveSettings();
+  touchInput.apply();
+}
+for (const id of ['touchShow', 'touchSwap', 'touchSize', 'touchAssist', 'touchFull', 'touchMeleeAim', 'touchHoldFire', 'touchFocus']) $(id).onchange = touchChanged;
+// Place the buttons: the editor goes over the menu, and the menu's back when it's done.
+$('touchEdit').onclick = () => {
+  $('gameMenu').hidden = true;
+  touchInput.edit(() => {
+    $('gameMenu').hidden = !menuOpen;
+    $('touchNote').textContent = 'Layout saved.';
+  });
+};
+// Copy settings: the touch setup (and the screen it was made on) as text, to paste and send.
+$('touchCopy').onclick = async () => {
+  const text = JSON.stringify({ touch: settings.touch, screen: [window.innerWidth, window.innerHeight] });
+  await copyText(text);
+  $('touchNote').textContent = 'Copied. Paste it to Claude to make it the default.';
+};
+$('touchOpacity').oninput = touchChanged;
+
 for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['volAnnouncer', 'announcer']]) {
   $(id).oninput = () => {
     settings.volume[key] = Number($(id).value);
@@ -1319,19 +1436,21 @@ function stepCharacter(by) {
   saveSettings();
   renderCharacter();
   renderCharButton();
-  if (mine.character) gameModule?.then((m) => m.setCharacter(mine.character, editing.player));
 }
 $('charPrev').onclick = () => stepCharacter(-1);
 $('charNext').onclick = () => stepCharacter(1);
 
-// The main screen's character button (beside your name): yours, the keyboard player's, the one Solo
-// and Online deal you. It opens a picker: Random and the whole cast, yours lit.
+// The character buttons (beside your name on the main screen, in Solo's setup and in the online
+// room): yours, the keyboard player's, the one Solo, Training and Online deal you. They open a
+// picker: Random and the whole cast, yours lit. In a room, the pick goes to the room too.
 function renderCharButton() {
   const c = deviceSettings('kbm').character;
-  charThumb($('charThumb'), c, 1.5);
-  $('charButtonName').textContent = charLabel(c);
+  for (const b of document.querySelectorAll('[data-char-button]')) {
+    charThumb(b.querySelector('.char-thumb'), c, 1.5);
+    b.querySelector('.char-name').textContent = charLabel(c);
+  }
 }
-$('charButton').onclick = () => {
+function openCharPicker() {
   const mine = deviceSettings('kbm').character ?? null;
   $('charGrid').replaceChildren(
     ...CHOICES.map((c) => {
@@ -1345,6 +1464,7 @@ $('charButton').onclick = () => {
         deviceSettings('kbm').character = c;
         saveSettings();
         renderCharButton();
+        state.room?.sendChar(c);
         $('charDialog').close();
       };
       return tile;
@@ -1352,7 +1472,8 @@ $('charButton').onclick = () => {
   );
   $('charDialog').showModal();
   $('charGrid').querySelector('.on')?.focus();
-};
+}
+for (const b of document.querySelectorAll('[data-char-button]')) b.onclick = openCharPicker;
 $('charClose').onclick = () => $('charDialog').close();
 // (A click on the backdrop, outside the picker, closes it too.)
 $('charDialog').addEventListener('click', (e) => e.target === $('charDialog') && $('charDialog').close());

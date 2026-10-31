@@ -1,9 +1,9 @@
 // Same checks as the Godot build's tests/run_tests.gd, so both versions follow the same rules.
 import { describe, it, expect } from 'vitest';
-import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin } from '../src/sim/world.js';
+import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin, spreadOf } from '../src/sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../src/sim/input.js';
-import { VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
-import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS } from '../src/sim/constants.js';
+import { DROPS, VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
+import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS, RUN } from '../src/sim/constants.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { STAGES, getStage } from '../src/sim/stage.js';
 import { MELEE_POINTS } from '../src/sim/meleePoints.js';
@@ -89,6 +89,94 @@ describe('movement', () => {
     run(w, 4, () => [{ ...NEUTRAL, dp: 3 }]);
     run(w, 30, () => [{ ...NEUTRAL, dp: 4 }]);
     expect(f.y).toBeGreaterThan(-60);
+  });
+
+  it('down held and jump drops through the thin bridge instead of jumping', () => {
+    const w = world();
+    const f = w.fighters[0];
+    place(f, 800, -100);
+    run(w, 20);
+    expect(f.y).toBe(-96);
+    run(w, 30, () => [{ ...NEUTRAL, down: true, crouch: true, jump: true, jp: 1 }]);
+    expect(f.y).toBeGreaterThan(-60);
+    // (Jump alone still jumps.)
+    place(f, 800, -100);
+    run(w, 20);
+    run(w, 10, () => [{ ...NEUTRAL, jump: true, jp: 2 }]);
+    expect(f.y).toBeLessThan(-96);
+  });
+
+  it('a dash on the ground, still held, becomes a run: free for a while, then on stamina', () => {
+    const w = world(2, { stage: 'training' });
+    const [a, b] = w.fighters;
+    place(a, 820, -2);
+    place(b, 300, -2);
+    run(w, 5);
+    // Dash right and keep holding right.
+    run(w, 1, () => [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+    run(w, 30, () => [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+    expect(a.run).toBeGreaterThanOrEqual(0);
+    expect(a.vx).toBeCloseTo(RUN.speed, 0);
+    expect(a.vx).toBeGreaterThan(FIGHTER.runSpeed);
+    // Free for RUN.free s: the bar doesn't drain or refill. (Low, so the drain ends it soon.)
+    a.stamina = 0.2;
+    const after = a.stamina;
+    run(w, 30, () => [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+    expect(a.stamina).toBeCloseTo(after, 5);
+    // Then it drains, and the run ends with the bar (when expected, give or take a few ticks).
+    let ticks = 0;
+    const expected = RUN.free - a.run + after / RUN.drain;
+    while (a.run >= 0 && ticks < 600) {
+      step(w, [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+      ticks++;
+    }
+    expect(a.stamina).toBeLessThan(0.02);
+    expect(Math.abs(ticks / 60 - expected)).toBeLessThan(0.1);
+  });
+
+  it('a run ends on letting go; a dash without holding on is just a dash', () => {
+    const w = world(2, { stage: 'training' });
+    const [a, b] = w.fighters;
+    place(a, 820, -2);
+    place(b, 300, -2);
+    run(w, 5);
+    run(w, 30, () => [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+    expect(a.run).toBeGreaterThanOrEqual(0);
+    run(w, 1, () => [{ ...NEUTRAL, xp: 1 }, NEUTRAL]);
+    expect(a.run).toBe(-1);
+    // Dash, then let go at once: no run.
+    run(w, 200);
+    run(w, 1, () => [{ ...NEUTRAL, mx: 1, xp: 2 }, NEUTRAL]);
+    run(w, 30, () => [{ ...NEUTRAL, xp: 2 }, NEUTRAL]);
+    expect(a.run).toBe(-1);
+  });
+
+  it('a run keeps its speed through a jump, and its shots spread as in the air', () => {
+    const w = world(2, { stage: 'training' });
+    const [a, b] = w.fighters;
+    place(a, 820, -2);
+    place(b, 300, -2);
+    run(w, 5);
+    run(w, 30, () => [{ ...NEUTRAL, mx: 1, xp: 1 }, NEUTRAL]);
+    expect(spreadOf(a)).toBeGreaterThan(spreadOf({ ...a, run: -1 }));
+    run(w, 10, () => [{ ...NEUTRAL, mx: 1, xp: 1, jump: true, jp: 1 }, NEUTRAL]);
+    expect(a.grounded).toBe(false);
+    expect(a.run).toBeGreaterThanOrEqual(0);
+    expect(a.vx).toBeCloseTo(RUN.speed, 0);
+  });
+
+  it('grabs from further away on the touch controls', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 600, -2);
+    place(b, 900, -2);
+    run(w, 5);
+    // 20 px away: out of the usual reach, inside the touch reach.
+    w.pickups.push({ id: 99, x: 600 + 20, y: 0, weapon: 'machete' });
+    step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]);
+    expect(a.melee).toBe(null);
+    step(w, [{ ...NEUTRAL, ep: 2, touch: true }, NEUTRAL]);
+    expect(a.melee).toBe('machete');
   });
 
   it('crouching makes you shorter, so a standing-height shot passes over', () => {
@@ -804,16 +892,15 @@ describe('guns', () => {
     expect(few.b.vx).toBe(0);
   });
 
-  it('picking up a gun loads it fully and swaps out a katana', () => {
+  it('picking up a gun loads it fully', () => {
     const w = world();
     const f = w.fighters[0];
     place(f, 600, -2);
     run(w, 5);
-    Object.assign(f, { hasGun: false, gun: null, blade: 'katana' });
+    Object.assign(f, { hasGun: false, gun: null });
     w.pickups.push({ id: 99, x: 600, y: 0, weapon: 'sniper' });
     step(w, [{ ...NEUTRAL, ep: 1 }, NEUTRAL]);
     expect(f.gun).toBe('sniper');
-    expect(f.blade).toBe(null);
     expect(f.ammo).toBe(GUNS.sniper.magazineSize);
   });
 });
@@ -1023,28 +1110,28 @@ describe('melee quirks', () => {
     expect(back.b.damage).toBe(MELEE.knife.heavyStats.damage * MELEE.knife.backstab.damageMul);
   });
 
-  // The trident goes in the gun slot.
+  // The trident: a melee weapon (the melee button: a tap thrusts, a hold throws it on its chain).
   function trident(gap) {
     const { w, a, b } = armed(null, gap);
-    Object.assign(a, { blade: 'trident', hasGun: false, gun: null, active: 'gun' });
+    Object.assign(a, { melee: 'trident', active: 'melee' });
     return { w, a, b };
   }
 
   it('the trident: its thrust reaches out to the tip, and catches people up close too', () => {
     for (const gap of [16, 36]) {
       const { w, b } = trident(gap);
-      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
-      run(w, 30, () => [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
+      run(w, 30, () => [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
       expect(b.damage, `${gap} px away`).toBe(MELEE.trident.damage);
     }
   });
 
   it('the trident: a tap thrusts, with a moderate push', () => {
     const { w, b } = trident(24);
-    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1, shoot: true }, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
     let push = 0;
     for (let t = 0; t < 30; t++) {
-      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
       push = Math.max(push, Math.abs(b.vx));
     }
     expect(b.damage).toBe(MELEE.trident.damage);
@@ -1056,7 +1143,7 @@ describe('melee quirks', () => {
     const { w, a, b } = trident(120);
     let caught = false;
     for (let t = 0; t < 120; t++) {
-      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1, shoot: t < 20 }, NEUTRAL]);
+      step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: t < 20 }, NEUTRAL]);
       if (a.chain?.phase === 'pull') caught = true;
       if (caught && !a.chain) break;
     }
@@ -1065,15 +1152,15 @@ describe('melee quirks', () => {
     expect(Math.abs(b.x - a.x)).toBeLessThanOrEqual(MELEE.trident.chain.meleeRange + 2);
     expect(b.hitstun).toBeGreaterThan(0.2);
     expect(a.chain).toBe(null);
-    expect(a.blade).toBe('trident');
+    expect(a.melee).toBe('trident');
   });
 
   it('the trident: a miss leaves you standing there until it is reeled back', () => {
     const { w, a } = trident(300);
-    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, ax: 0, ay: -1, sp: 1, shoot: true }, NEUTRAL]);
+    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, ax: 0, ay: -1, mp: 1, meleeHeld: true }, NEUTRAL]);
     expect(a.chain).not.toBe(null);
     const x = a.x;
-    run(w, 10, () => [{ ...NEUTRAL, mx: 1, ax: 0, ay: -1, sp: 2, block: true }, NEUTRAL]);
+    run(w, 10, () => [{ ...NEUTRAL, mx: 1, ax: 0, ay: -1, mp: 2, block: true }, NEUTRAL]);
     expect(a.x).toBeCloseTo(x, 5);
     expect(a.blocking).toBe(null);
     run(w, 120);
@@ -1142,11 +1229,10 @@ describe('melee quirks', () => {
     expect(w.pickups.some((p) => p.weapon === 'chola')).toBe(false);
   });
 
-  it('the knife throws faster and flatter, and sooner', () => {
+  it('the knife throws faster and flatter', () => {
     const { w } = armed('knife', 400);
-    // Ready sooner than other light weapons: a hold just past the knife's wind-up throws it.
+    // A hold just past the wind-up throws it.
     const ticks = Math.ceil(MELEE.knife.throw.holdToThrow * 60) + 1;
-    expect(ticks).toBeLessThan(LIGHT_THROW.holdToThrow * 60);
     for (let t = 0; t < ticks; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
     expect(w.bullets.length).toBe(0); // nothing until you let go
     step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
@@ -1274,7 +1360,7 @@ describe('training', () => {
       spawnWeapon(w, 0, weapon);
       step(w, [{ ...NEUTRAL, ep: w.tick & 0xff }, NEUTRAL]);
       expect(w.pickups.length, weapon).toBe(0);
-      const got = GUNS[weapon] ? f.gun : GRENADES[weapon] ? f.grenades.find((g) => g === weapon) : MELEE[weapon].replacesGun ? f.blade : f.melee;
+      const got = GUNS[weapon] ? f.gun : GRENADES[weapon] ? f.grenades.find((g) => g === weapon) : f.melee;
       expect(got, weapon).toBe(weapon);
     }
   });
@@ -1703,7 +1789,7 @@ describe('random stages', () => {
 
 describe('input over the network', () => {
   it('round-trips', () => {
-    const input = { mx: -1, down: true, up: true, jump: false, crouch: true, shoot: true, block: true, meleeHeld: true, grenadeHeld: true, jp: 3, sp: 255, mp: 0, dp: 9, rp: 4, hp: 7, ep: 2, gp: 5, xp: 6, cp: 8, kp: 4, ax: 0.71, ay: -0.71 };
+    const input = { mx: -1, down: true, up: true, jump: false, crouch: true, shoot: true, block: true, meleeHeld: true, grenadeHeld: true, touch: true, jp: 3, sp: 255, mp: 0, dp: 9, rp: 4, hp: 7, ep: 2, gp: 5, xp: 6, cp: 8, kp: 4, ax: 0.71, ay: -0.71 };
     expect(decodeInput(encodeInput(input))).toEqual(input);
   });
 
@@ -1962,7 +2048,7 @@ describe('wind-ups, throws and the crusher', () => {
     expect(b.damage).toBeGreaterThan(0);
     expect(b.slip).toBeGreaterThan(0);
     ({ w, a, b } = armed('knife', 60, 1));
-    go(w, 15, { meleeHeld: true });
+    go(w, 20, { meleeHeld: true });
     go(w, 30);
     expect(b.damage).toBe(MELEE.knife.throw.damage * MELEE.knife.backstab.damageMul);
   });
@@ -2245,7 +2331,7 @@ describe('items', () => {
     const { w, a, b } = holding('crystal', 700);
     place(b, 700, -70);
     Object.assign(a, { melee: 'knife', active: 'melee' });
-    for (let t = 0; t < 15; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
+    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
     for (let t = 0; t < 60; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
     expect(b.damage).toBe(MELEE.knife.throw.damage * ITEMS.crystal.homing.damage);
   });
@@ -3365,5 +3451,54 @@ describe('shooting grenades', () => {
     a.active = 'melee';
     step(w, [{ ...NEUTRAL, ax: 1, ay: 0, sp: 1 }, NEUTRAL]);
     expect(a.active).toBe('gun');
+  });
+});
+
+describe('pickups: caps and what the knocked out drop', () => {
+  it('weapons, grenades and items each have their own cap', () => {
+    const w = world();
+    for (let k = 0; k < 4; k++) w.pickups.push({ id: 900 + k, x: 100 + k * 30, y: 0, weapon: 'machete' });
+    const before = new Set(w.pickups.map((p) => p.id));
+    run(w, 60 * 120);
+    const fresh = w.pickups.filter((p) => !before.has(p.id));
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh.every((p) => GRENADES[p.weapon] || ITEMS[p.weapon])).toBe(true);
+    expect(fresh.filter((p) => GRENADES[p.weapon]).length).toBeLessThanOrEqual(4);
+    expect(fresh.filter((p) => ITEMS[p.weapon]).length).toBeLessThanOrEqual(4);
+  });
+
+  it("a knocked-out fighter's weapons float down mid-arena, guns keep their rounds, and go after their time", () => {
+    const w = world();
+    const [a] = w.fighters;
+    run(w, 5);
+    Object.assign(a, { gun: 'shotgun', hasGun: true, ammo: 3, melee: 'machete', grenades: ['frag', 'fire'] });
+    place(a, a.x, 2000); // (down off the stage: knocked out)
+    run(w, 2);
+    const drops = w.pickups.filter((p) => p.life !== undefined);
+    expect(drops.map((p) => p.weapon).sort()).toEqual(['fire', 'frag', 'machete', 'shotgun']);
+    expect(drops.find((p) => p.weapon === 'shotgun').ammo).toBe(3);
+    const s = w.storm;
+    const mid = (s.left + s.right) / 2;
+    expect(drops.every((p) => Math.abs(p.x - mid) <= DROPS.range + 3 * DROPS.spread)).toBe(true);
+    const xs = drops.map((p) => p.x).sort((x, y) => x - y);
+    expect(xs.every((x, k) => k === 0 || x - xs[k - 1] >= DROPS.spread - 12)).toBe(true);
+    expect(drops.every((p) => p.fall > 0)).toBe(true);
+    run(w, Math.ceil((DROPS.height / DROPS.fallSpeed) * 60) + 5);
+    expect(w.pickups.filter((p) => p.life !== undefined).every((p) => !p.fall)).toBe(true);
+    run(w, DROPS.life * 60);
+    expect(w.pickups.some((p) => p.life !== undefined)).toBe(false);
+  });
+
+  it("the knife: thrown, you keep it, and wait the cooldown to throw again", () => {
+    const w = world();
+    const [a] = w.fighters;
+    place(a, 600, -2);
+    run(w, 5);
+    Object.assign(a, { melee: 'knife', active: 'melee' });
+    for (let t = 0; t < 20; t++) step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1, meleeHeld: true }, NEUTRAL]);
+    step(w, [{ ...NEUTRAL, ax: 1, ay: 0, mp: 1 }, NEUTRAL]);
+    expect(a.melee).toBe('knife');
+    expect(a.throwCd).toBeGreaterThan(2);
+    expect(w.bullets.some((b) => b.kind === 'knife' && !b.recover)).toBe(true);
   });
 });

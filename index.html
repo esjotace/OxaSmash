@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Unos tiritos ahi</title>
     <meta name="description" content="A small browser platform fighter. Knock your friends off the stage, online with a room code or against bots." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='7' y='3' width='18' height='26' rx='6' fill='%23ff5d73'/%3E%3Crect x='13' y='9' width='11' height='6' rx='3' fill='%2310131c'/%3E%3C/svg%3E" />
@@ -69,14 +69,11 @@
           <label class="field name">Your name <input id="name" maxlength="12" autocomplete="off" spellcheck="false" /></label>
           <div class="field">
             Your character
-            <button id="charButton" class="char-button" aria-haspopup="dialog"><span id="charThumb" class="char-thumb"></span><span id="charButtonName"></span></button>
+            <button id="charButton" class="char-button" aria-haspopup="dialog" data-char-button><span class="char-thumb"></span><span class="char-name"></span></button>
           </div>
+          <!-- Options: the in-game menu's settings (game, sound, controls), from here. -->
+          <button id="optionsBtn" class="btn ghost options-btn">Options</button>
         </div>
-        <dialog id="charDialog" class="char-dialog">
-          <h2>Your character</h2>
-          <div id="charGrid" class="char-grid"></div>
-          <div class="row"><button id="charClose" class="btn ghost">Close</button></div>
-        </dialog>
 
         <!-- The guide, in Spanish and on purpose a bit silly: the short table first (for whoever only
              looks), the deep stuff after (for whoever min-maxes). Keys and buttons: the defaults in
@@ -99,7 +96,7 @@
               <tr><td>Bloquear</td><td><kbd>Q</kbd> o <kbd>Shift</kbd></td><td>RB / R</td></tr>
               <tr><td>Esquivar</td><td><kbd>F</kbd></td><td>B / A</td></tr>
               <tr><td>Recoger</td><td><kbd>E</kbd></td><td>Y / X</td></tr>
-              <tr><td>Agacharte · tócalo dos veces para bajar de una plataforma</td><td><kbd>S</kbd></td><td>Cruz ↓ o stick abajo</td></tr>
+              <tr><td>Agacharte · tócalo dos veces (o abajo + saltar) para bajar de una plataforma</td><td><kbd>S</kbd></td><td>Cruz ↓ o stick abajo</td></tr>
               <tr><td>Esconderte en una puerta</td><td><kbd>W</kbd></td><td>Cruz ↑</td></tr>
               <tr><td>Recargar (igual recarga sola)</td><td><kbd>R</kbd></td><td>X / Y</td></tr>
               <tr><td>Cambiar de granada</td><td>Rueda o <kbd>Z</kbd></td><td>Cruz →</td></tr>
@@ -114,6 +111,7 @@
           <h3>Para los que vinieron a min-maxear</h3>
           <dl>
             <dt>Parry</dt><dd>Lo que nadie hace en este grupo. Suelta el bloqueo <strong>justo</strong> cuando te llega el golpe: el otro queda aturdido y tú quedas un burde pila on. El bloqueo para golpes, no balas. Agachado bloqueas los golpes bajos.</dd>
+            <dt>Correr</dt><dd>Haz un dash en el piso y sigue aguantando hacia ese lado: sales corriendo, más rápido que caminando. El primer segundo y medio es gratis; después se come la stamina, y sin stamina se acaba. Mientras corres la stamina no se recarga. Saltar mantiene la velocidad (saltos más largos), y puedes disparar corriendo, pero las balas se abren como en el aire. Se acaba si sueltas, te volteas, te agachas, bloqueas o te pegan. Sirve para perseguir al que acabas de mandar a volar.</dd>
             <dt>Esquive / dash</dt><dd>Al principio del dash hay frames de invencibilidad: las balas, los golpes y las explosiones te atraviesan. Los pinchos y la tormenta no: esos no perdonan. Sin dirección, esquivas hacia atrás.</dd>
             <dt>DI</dt><dd>Cuando te mandan a volar, mantener una dirección tuerce el vuelo un poquito (hasta 15°): úsalo para no irte del mapa. El dash también tiene, y más: arriba o abajo mientras lo das lo inclina hasta 45° (en el piso, arriba es un saltito). Arriba + dash para volver a la plataforma, abajo + dash para clavarte al piso.</dd>
             <dt>Stamina</dt><dd>La rayita blanca bajo tus pies. Llena te da para dos esquives. También la gastas disparando agachado (agachado apuntas más firme, hasta que se acaba) y pegando mientras corres (las armas pesadas cuestan más; si no te alcanza, te paras a pegar).</dd>
@@ -130,9 +128,9 @@
           <h3>Armas cuerpo a cuerpo</h3>
           <p>Regla de oro: <strong>las ligeras empujan menos pero gastan menos stamina; las pesadas empujan más y usan más stamina.</strong> (Los nombres están como salen en el juego.)</p>
           <dl>
-            <dt>Ligeras</dt><dd><strong>Otaku Katana</strong>: rápida; si cortas una bala, la devuelves hacia donde apuntas (sí, como en el anime)<br /><strong>Keyboard</strong>: cada golpe es una palabra, y la palabra decide cuánto duele<br /><strong>Knife</strong>: doble daño por la espalda; se lanza rápido y recto<br /><strong>Machete</strong>: amplio; cada tercer golpe seguido sí manda a volar<br /><strong>Nodachi</strong>: larga; en vez de lanzarla, mantén para cargar un tajo con dash que manda a volar.</dd>
+            <dt>Ligeras</dt><dd><strong>Otaku Katana</strong>: rápida; si cortas una bala, la devuelves hacia donde apuntas (sí, como en el anime)<br /><strong>Keyboard</strong>: cada golpe es una palabra, y la palabra decide cuánto duele<br /><strong>Knife</strong>: doble daño por la espalda; se lanza rápido y recto, y no lo pierdes: lanzas uno de repuesto y esperas un ratico para lanzar otro (como el Cleaver)<br /><strong>Machete</strong>: amplio; cada tercer golpe seguido sí manda a volar<br /><strong>Nodachi</strong>: larga; en vez de lanzarla, mantén para cargar un tajo con dash que manda a volar.</dd>
             <dt>Pesadas</dt><dd><strong>Bolívar's Sword</strong>: balanceada, como debe ser<br /><strong>La Chola</strong>: lenta y empuja una barbaridad; toca para pegar, mantén para lanzarla… y ahí se fue, no vuelve<br /><strong>Shovel</strong>: de abajo pa' arriba, directo al cielo<br /><strong>Oooga Booga</strong>: el garrote del cavernícola; mantén para cargarlo y lo manda plano y lejos. Bonk<br /><strong>Cleaver</strong>: corto y brutal<br /><strong>War Hammer</strong>: la más lenta, la que más lejos manda<br /><strong>Bone Axe</strong>: atraviesa el bloqueo.</dd>
-            <dt>Trident</dt><dd>Va en el puesto de la pistola. Toca para pinchar; mantén para lanzarlo con su cadena: si atrapas a alguien, queda aturdido y te lo traes. Si fallas, te quedas ahí parado esperando a que vuelva. Alto riesgo, alto estilo.</dd>
+            <dt>Trident</dt><dd>Arma cuerpo a cuerpo pesada. Toca para pinchar; mantén para lanzarlo con su cadena: si atrapas a alguien, queda aturdido y te lo traes. Si fallas, te quedas ahí parado esperando a que vuelva. Alto riesgo, alto estilo.</dd>
           </dl>
 
           <h3>Pistolas</h3>
@@ -142,6 +140,8 @@
             <dt>Especiales</dt><dd>Sniper, Rocket Launcher: pegan igual de duro, van al hombro, pero traen poquitas balas. Úsalas con cariño.</dd>
             <dt>The Snoozer</dt><dd>El sniper morado. Una sola bala, y casi no hace daño, pero al que le pega <strong>se queda dormido 3 segundos</strong>: tirado en el piso, sin poder hacer nada... salvo patalear: si mashea movimientos (izquierda-derecha, saltar, dash, abajo; repetir lo mismo cuenta menos) llena la barrita azul y se despierta a los 2. Cualquier golpe lo despierta, así que el primero que le des que cuente (pista: Oooga Booga cargado). Como todas las especiales, no se puede disparar desde detrás de cobertura.</dd>
           </dl>
+
+          <p><strong>Pesca en el centro:</strong> cuando alguien pierde una vida, sus armas (la pistola especial con las balas que le quedaban, el arma cuerpo a cuerpo y las granadas) caen flotando cerca del centro de lo que queda del mapa. Duran 10 segundos en el piso: el que llegue primero, se las queda.</p>
 
           <h3>Granadas</h3>
           <p>Llevas dos, y eliges cuál sale. Mantén para cocinarla y apuntar… pero si la cocinas demasiado, te explota en la mano. Y sí, va a pasar. Una granada en el aire o tirada en el piso <strong>se puede reventar de un tiro</strong>, la de cualquiera (menos la que todavía está en una mano): explótasela en la cara al que la lanzó. Si te mata, el crédito es de quien disparó, y si te la reventaste tú solito… bueno, eso cuenta como suicidio.</p>
@@ -172,7 +172,8 @@
           <dl>
             <dt>Misma pantalla</dt><dd>De 2 a 4 en una pantalla: uno con teclado y ratón, los demás con control (o todos con control). Tú eliges armas, vidas, la tormenta, rondas y bots.</dd>
             <dt>Solo</dt><dd>Un control funciona junto al teclado y el ratón: usa el que quieras.</dd>
-            <dt>Menú</dt><dd><kbd>Esc</kbd> (o Start): volumen, tu personaje, teclas y botones. Mientras juegas, el ratón queda atrapado en el juego; el menú lo suelta.</dd>
+            <dt>Menú</dt><dd><kbd>Esc</kbd> (o Start): volumen, teclas y botones. El personaje se escoge antes de jugar: al lado de tu nombre, en Solo o en la sala online. Mientras juegas, el ratón queda atrapado en el juego; el menú lo suelta.</dd>
+            <dt>En el celular</dt><dd>Se juega de lado. El stick sale donde pongas el pulgar izquierdo: abajo te agachas, arriba te escondes en una puerta. <strong>Fire</strong>, <strong>Heavy</strong> y <strong>Nade</strong> se apuntan arrastrando: pon el dedo y deslízalo hacia donde quieres apuntar; un toque sin arrastrar apunta solo al enemigo más cerca. En <strong>Options → Touch</strong> cambias el lado, el tamaño y la transparencia.</dd>
           </dl>
 
           <p class="help-outro">Recuerda la regla de oro: si no te pegan, no te quitan vida.</p>
@@ -210,6 +211,7 @@
           <button id="startMatch" class="btn primary">Start</button>
           <button id="readyBtn" class="btn primary" hidden>Ready</button>
           <button id="leaveRoom" class="btn ghost">Leave room</button>
+          <button id="lobbyChar" class="char-button" aria-haspopup="dialog" title="Your character" data-char-button><span class="char-thumb"></span><span class="char-name"></span></button>
         </div>
         <p id="lobbyStatus" class="status" role="status"></p>
         <!-- Everyone's suggestions, tagged with who made them (the owner can use one). -->
@@ -235,6 +237,7 @@
         <div class="row">
           <button id="botStart" class="btn primary">Watch</button>
           <button id="botBack" class="btn ghost">Back</button>
+          <button id="botChar" class="char-button" aria-haspopup="dialog" title="Your character" data-char-button><span class="char-thumb"></span><span class="char-name"></span></button>
         </div>
       </div>
     </main>
@@ -394,9 +397,11 @@
         <label class="field small menu-for">Settings for <select id="menuFor"></select></label>
         <div class="menu-tabs" role="tablist">
           <button class="tab on" data-tab="general">Game</button>
-          <button class="tab" data-tab="character">Character</button>
+          <button class="tab" data-tab="sound">Sound</button>
+          <button class="tab" data-tab="character" data-options>Character</button>
           <button class="tab" data-tab="keyboard">Keyboard</button>
           <button class="tab" data-tab="controller">Controller</button>
+          <button class="tab" data-tab="touch">Touch</button>
           <button class="tab" data-tab="training" data-training hidden>Training</button>
           <button class="tab" data-tab="dummies" data-training hidden>Dummies</button>
         </div>
@@ -412,11 +417,32 @@
             <button id="perfRestart" class="btn ghost">Measure again from now</button>
             <span id="perfNote" class="muted"></span>
           </div>
+          <label class="field small">Graphics <select id="graphics"><option value="auto">Auto</option><option value="sharp">Sharp</option><option value="fast">Fast (slower computers)</option></select></label>
+          <p id="graphicsNote" class="muted"></p>
+          <label class="check"><input id="cameraLean" type="checkbox" /> Camera leans toward your aim (off: it stays centred on you, gentler on motion sickness)</label>
+        </section>
+        <section class="menu-page" data-page="sound" hidden>
           <label class="slider">Master <input id="volMaster" type="range" min="0" max="1" step="0.05" /></label>
           <label class="slider">Effects <input id="volEffects" type="range" min="0" max="1" step="0.05" /></label>
           <label class="slider">Announcer <input id="volAnnouncer" type="range" min="0" max="1" step="0.05" /></label>
-          <label class="field small">Graphics <select id="graphics"><option value="auto">Auto</option><option value="sharp">Sharp</option><option value="fast">Fast (slower computers)</option></select></label>
-          <p id="graphicsNote" class="muted"></p>
+        </section>
+        <!-- The on-screen controls for phones and tablets (see src/game/touch.js). -->
+        <section class="menu-page" data-page="touch" hidden>
+          <label class="field small">On-screen controls <select id="touchShow"><option value="auto">On touch screens</option><option value="on">Always</option><option value="off">Off</option></select></label>
+          <label class="field small">Layout <select id="touchSwap"><option value="">Stick left, buttons right</option><option value="swap">Buttons left, stick right</option></select></label>
+          <label class="field small">Size <select id="touchSize"><option value="0.85">Small</option><option value="1">Medium</option><option value="1.2">Large</option></select></label>
+          <label class="slider">Opacity <input id="touchOpacity" type="range" min="0.2" max="1" step="0.05" /></label>
+          <label class="check"><input id="touchAssist" type="checkbox" /> Aim assist: a tap on Fire, Heavy or Nade aims at the nearest enemy</label>
+          <label class="field small">Melee aim (Heavy without sliding, and Jab) <select id="touchMeleeAim"><option value="stick">Follows the stick, facing the enemy</option><option value="assist">Straight at the enemy (aim assist)</option></select></label>
+          <label class="check"><input id="touchHoldFire" type="checkbox" /> Hold Fire to keep shooting (pistols, revolvers, shotguns...)</label>
+          <label class="check"><input id="touchFocus" type="checkbox" /> Tap to focus: tap a fighter to lock your aim assist onto them (tap them again to let go)</label>
+          <label class="check"><input id="touchFull" type="checkbox" /> Fullscreen when a match starts (and sideways, where the phone allows it)</label>
+          <div class="row">
+            <button id="touchEdit" class="btn">Place the buttons</button>
+            <button id="touchCopy" class="btn ghost">Copy settings</button>
+          </div>
+          <p id="touchNote" class="muted"></p>
+          <p class="muted">The stick appears wherever your thumb lands on its side. Push it down to crouch (twice quickly drops through a platform), up to hide in a doorway. Fire, Heavy and Nade aim by dragging: touch the button and slide your thumb the way to aim. Hold Heavy for the special, hold Nade to cook it. Grab is just right of Fire, and the next grenade (⇄) sits above the stick; reloading is automatic. With melee following the stick, you always face the enemy and the stick sets the angle: your aim follows it as you walk. The stick crouches or hides only when pushed within 30° of straight down or up. Pick up a controller and the buttons step aside until you touch the screen again.</p>
         </section>
         <section class="menu-page" data-page="character" hidden>
           <div class="char-pick">
@@ -425,7 +451,7 @@
             <button id="charNext" class="btn ghost" aria-label="Next character">›</button>
           </div>
           <p id="charName" class="char-name"></p>
-          <p class="muted">Changes this player's character right away (online, everyone sees it). It's kept for whoever plays on this device next time.</p>
+          <p class="muted">The character dealt to whoever plays on this device, from the next match.</p>
         </section>
         <section class="menu-page" data-page="keyboard" hidden>
           <ul id="keyList" class="bind-list"></ul>
@@ -470,10 +496,18 @@
           <ul id="padList" class="bind-list"></ul>
           <button id="resetPad" class="btn ghost">Reset to defaults</button>
         </section>
-        <p class="muted hint">Esc closes this menu. Click the game to capture the mouse again.</p>
+        <p id="menuHint" class="muted hint">Esc closes this menu. Click the game to capture the mouse again.</p>
       </div>
     </div>
     <div id="toast" role="alert"></div>
+    <!-- The character picker: the main menu's, Solo's and the online room's character buttons open it. -->
+    <dialog id="charDialog" class="char-dialog">
+      <h2>Your character</h2>
+      <div id="charGrid" class="char-grid"></div>
+      <div class="row"><button id="charClose" class="btn ghost">Close</button></div>
+    </dialog>
+    <!-- Phones, in a match, held upright: the game is played sideways. -->
+    <div id="rotate"><div><div class="rotate-phone"></div><p>Turn your phone sideways to play</p></div></div>
 
     <script type="module" src="./src/main.js"></script>
   </body>

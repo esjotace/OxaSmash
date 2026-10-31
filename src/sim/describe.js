@@ -105,7 +105,6 @@ export function gunNotes(g) {
 
 export function meleeQuirks(m) {
   const out = [];
-  if (m.replacesGun) out.push('goes in the gun slot (it counts as your gun)');
   if (m.thrust) out.push('a straight thrust, no arc');
   if (m.rising) out.push('swings from below to above');
   if (m.deflect) out.push(`swing into bullets to send them back (×${m.deflect.damageMul} damage)`);

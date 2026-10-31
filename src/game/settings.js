@@ -116,7 +116,31 @@ function load() {
   if (saved.pad && !saved.devices) devices.pad0.pad = { ...DEFAULT_PAD, ...saved.pad };
   // graphics: how sharp the game is drawn ('auto', 'sharp' or 'fast'; see RENDER_SCALE in game.js).
   const graphics = ['auto', 'sharp', 'fast'].includes(saved.graphics) ? saved.graphics : 'auto';
-  return { volume: { master: 0.8, effects: 1, announcer: 1, ...saved.volume }, keys: { ...DEFAULT_KEYS, ...saved.keys }, devices, graphics };
+  // touch: the on-screen controls (see touch.js): when they show ('auto': on touch screens), their
+  // size and opacity, the stick on the right instead (swap), aim assist on a tap, going
+  // fullscreen (sideways where the phone allows it) on the first touch of a match, and where each
+  // button was placed.
+  const t = saved.touch ?? {};
+  const touch = {
+    show: ['auto', 'on', 'off'].includes(t.show) ? t.show : 'auto',
+    size: [0.85, 1, 1.2].includes(t.size) ? t.size : 1,
+    opacity: typeof t.opacity === 'number' ? Math.max(0.2, Math.min(1, t.opacity)) : 0.6,
+    swap: !!t.swap,
+    assist: t.assist !== false,
+    fullscreen: t.fullscreen !== false,
+    // meleeAim: how melee (Heavy without sliding, and Jab) aims: 'stick' (facing the enemy, at the
+    // stick's angle: up for an uppercut) or 'assist' (straight at the enemy). focus: a tap on a
+    // fighter locks the aim assist onto them. holdFire: holding Fire keeps shooting a
+    // one-shot-per-press gun (see TOUCH_REFIRE in controls.js).
+    meleeAim: ['stick', 'assist'].includes(t.meleeAim) ? t.meleeAim : t.meleeStick === false ? 'assist' : 'stick',
+    holdFire: t.holdFire !== false,
+    focus: t.focus === true,
+    // Buttons the player moved or resized: { id: [across, up, diameter] } in thumb-width units.
+    layout: Object.fromEntries(Object.entries(t.layout ?? {}).filter(([, v]) => Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n)))),
+  };
+  // cameraLean: the camera leans toward where you aim (off: it stays centred on you).
+  const cameraLean = saved.cameraLean !== false;
+  return { volume: { master: 0.8, effects: 1, announcer: 1, ...saved.volume }, keys: { ...DEFAULT_KEYS, ...saved.keys }, devices, graphics, touch, cameraLean };
 }
 
 export const settings = load();

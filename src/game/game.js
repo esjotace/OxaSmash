@@ -67,7 +67,6 @@ const match = () => (game?.scene.isActive('match') ? game.scene.getScene('match'
 export const inMatch = () => !!match();
 export const setMenu = (open) => match()?.setMenu(open);
 export const applySettings = () => match()?.applySettings();
-export const setCharacter = (char, slot) => match()?.setCharacter(char, slot);
 export const trainingSpawn = (weapon) => match()?.trainingSpawn(weapon);
 export const setDummies = (cfg) => match()?.setDummies(cfg);
 export const setDummyHealth = (health) => match()?.setDummyHealth(health);

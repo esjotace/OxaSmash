@@ -3,7 +3,7 @@
 // Two cameras: the main one follows the action; the HUD camera stays put.
 import Phaser from 'phaser';
 import { GUN_POINTS } from '../sim/gunPoints.js';
-import { STRIKE, MELEE, PISTOL, GUNS, GRENADES, DASH, DOOR, VIEW_W, VIEW_H, TILE, SPIKES, BARREL, TILTED_GUNS, FOOTHOLD, HEADSHOT, FIGHTER, CAT, ANIMALS } from '../sim/constants.js';
+import { STRIKE, MELEE, PISTOL, PICKUPS, GUNS, GRENADES, DASH, DOOR, VIEW_W, VIEW_H, TILE, SPIKES, BARREL, TILTED_GUNS, FOOTHOLD, HEADSHOT, FIGHTER, CAT, ANIMALS } from '../sim/constants.js';
 import { swingAngle, gunOrigin, aimOrigin, spreadOf, throwOf, thrustReach, weaponOf, spinBall, swingPoints, bodyHeight } from '../sim/world.js';
 import { MELEE_POINTS } from '../sim/meleePoints.js';
 import { drawDosText, wrap, LINE, lineWidth } from './dosfont.js';
@@ -18,8 +18,14 @@ import { getStage } from '../sim/stage.js';
 import { PLAYER_COLORS, FONT } from './palette.js';
 import { CHARACTERS, POSES, OWN_HANDS, BORROWED_HANDS } from './cast.js';
 import { Sfx } from './audio.js';
+import { settings } from './settings.js';
+import { TOUCH_SCREEN } from './touch.js';
 
 const PANEL_W = 120;
+// The camera's lean toward a controller's or the touch controls' aim (see updateCamera): a new
+// lean is taken once the aim has stayed within `still` px of it for `hold` s, then eased into at
+// `ease` per second.
+const LEAN = { hold: 0.35, still: 20, ease: 2.5 };
 // Weapon art that isn't drawn lying flat with the tip to the right: the direction it points (radians,
 // y down) and where the hand holds it. Everything else is held at (0.12, 0.5).
 // mirror: the art's top side is the one that should face down (so it's flipped the other way).
@@ -649,10 +655,13 @@ export class Renderer {
       const bob = Math.round(Math.sin(this.anim * 4 + p.id) * 2);
       img.setPosition(p.x, p.y - 6 + bob).setVisible(!(p.blink && Math.floor(this.anim * 8) % 2 === 0));
       const pulse = 0.35 + 0.25 * Math.sin(this.anim * 6 + p.id);
-      this.g.lineStyle(1, 0xffffff, pulse).strokeEllipse(p.x, p.y - 2, 24, 6);
+      // (Floating down from a knocked-out fighter: no glow on the ground yet.)
+      if (!p.air) this.g.lineStyle(1, 0xffffff, pulse).strokeEllipse(p.x, p.y - 2, 24, 6);
+      // (Within grabbing reach: wider while playing on the touch controls.)
       const near = this.locals.find((i) => {
         const f = view.fighters[i];
-        return f && f.state === 'ok' && Math.abs(f.x - p.x) <= 16 && Math.abs(f.y - p.y) <= 24;
+        const touch = this.scene.controls?.[i]?.usingTouch();
+        return f && f.state === 'ok' && Math.abs(f.x - p.x) <= (touch ? PICKUPS.touchReach : PICKUPS.reach) && Math.abs(f.y - p.y) <= (touch ? PICKUPS.touchReachY : PICKUPS.reachY);
       });
       if (near !== undefined) {
         // The pick-up button of whoever is standing there: their key, or their controller's button.
@@ -721,6 +730,15 @@ export class Renderer {
       const f = view.fighters[i];
       const at = f && f.state === 'ok' ? this.scene.controls?.[i]?.aimPoint(f) : null;
       if (at) this.crosshair(g, f, at, at.pad ? PLAYER_COLORS[i].hex : 0xffffff);
+      // Touch, tap to focus: corner brackets around the fighter the aim's locked onto.
+      const lock = this.scene.controls?.[i]?.lockId;
+      const t = lock !== null && lock !== undefined ? view.fighters.find((v) => v.id === lock && v.state === 'ok') : null;
+      if (t) {
+        const [x0, y0, x1, y1, k] = [Math.round(t.x) - 11, Math.round(t.y) - 34, Math.round(t.x) + 11, Math.round(t.y) + 3, 4];
+        g.lineStyle(1, PLAYER_COLORS[i].hex, 1);
+        g.lineBetween(x0, y0, x0 + k, y0).lineBetween(x0, y0, x0, y0 + k).lineBetween(x1, y0, x1 - k, y0).lineBetween(x1, y0, x1, y0 + k);
+        g.lineBetween(x0, y1, x0 + k, y1).lineBetween(x0, y1, x0, y1 - k).lineBetween(x1, y1, x1 - k, y1).lineBetween(x1, y1, x1, y1 - k);
+      }
     }
   }
 
@@ -728,7 +746,7 @@ export class Renderer {
     let { x, y } = at;
     let gap = 3;
     const gun = f.hasGun && GUNS[f.gun];
-    const range = gun ? gun.bulletRange : f.blade && MELEE[f.blade].chain && !f.chain ? MELEE[f.blade].chain.length : 0;
+    const range = gun ? gun.bulletRange : f.active === 'melee' && f.melee && MELEE[f.melee].chain && !f.chain ? MELEE[f.melee].chain.length : 0;
     if (range) {
       const o = gun ? gunOrigin(f) : aimOrigin(f);
       const dx = at.x - o.x;
@@ -1043,7 +1061,8 @@ export class Renderer {
 
   // A knockout line at the top left, in the knocked-out player's colour; at most 4 at once.
   addFeed(text, id) {
-    const t = this.scene.add.text(6, 0, text, { fontFamily: FONT, fontSize: '9px', fontStyle: 'bold', color: PLAYER_COLORS[id]?.css ?? '#ffffff', stroke: '#0b0d18', strokeThickness: 3, resolution: this.res });
+    // (Bigger on touch screens: phones are small.)
+    const t = this.scene.add.text(6, 0, text, { fontFamily: FONT, fontSize: TOUCH_SCREEN ? '13px' : '9px', fontStyle: 'bold', color: PLAYER_COLORS[id]?.css ?? '#ffffff', stroke: '#0b0d18', strokeThickness: 3, resolution: this.res });
     this.hud.add(t);
     this.feed.push({ t, age: 0 });
     while (this.feed.length > 4) this.feed.shift().t.destroy();
@@ -1057,7 +1076,7 @@ export class Renderer {
       f.t.destroy();
       return false;
     });
-    this.feed.forEach((f, k) => f.t.setPosition(6, 6 + k * 12).setAlpha(Math.min(1, (LIFE - f.age) / 0.6, f.age * 8)));
+    this.feed.forEach((f, k) => f.t.setPosition(6, 6 + k * (TOUCH_SCREEN ? 16 : 12)).setAlpha(Math.min(1, (LIFE - f.age) / 0.6, f.age * 8)));
   }
 
   // A puff of dust (the smoke strip, tinted dusty), size: its scale.
@@ -1238,11 +1257,24 @@ export class Renderer {
     if (!watching && alive.length === 1) {
       gx = alive[0].x;
       gy = alive[0].y - 30;
-      // The camera leans toward where you aim: the mouse cursor, or a controller's aim.
+      // The camera leans toward where you aim (unless the setting's off): the mouse cursor, or a
+      // controller's or the touch controls' aim. Those take a new lean only once the aim has held
+      // it a moment (LEAN.hold), then glide there (LEAN.ease): flicking the aim back and forth
+      // (tapping Fire one way while walking the other) doesn't swing the camera.
       const c = this.scene.controls?.[this.locals[0]];
-      if (c?.usingPad()) {
-        gx += alive[0].aimX * 60;
-        gy += alive[0].aimY * 40;
+      if (!settings.cameraLean) {
+        // (Centred on you.)
+      } else if (c?.usingPad() || c?.usingTouch()) {
+        const l = (this.lean ??= { x: 0, y: 0, to: [0, 0], next: [0, 0], held: 0 });
+        const want = [alive[0].aimX * 60, alive[0].aimY * 40];
+        if (Math.hypot(want[0] - l.next[0], want[1] - l.next[1]) > LEAN.still) [l.next, l.held] = [want, 0];
+        else l.held += dt;
+        if (l.held >= LEAN.hold) l.to = l.next;
+        const k = 1 - Math.exp(-LEAN.ease * dt);
+        l.x += (l.to[0] - l.x) * k;
+        l.y += (l.to[1] - l.y) * k;
+        gx += l.x;
+        gy += l.y;
       } else if (this.mouseLook && c) {
         const p = c.pointer();
         gx += (p.x / this.res - VIEW_W / 2) * 0.3;
@@ -1449,6 +1481,15 @@ export class Renderer {
     const sprite = this.bodies?.[i];
     if (sprite) {
       this.drawBody(sprite, f, i, a, low, x);
+      // Running: leaning the way it goes (even backing off while facing someone), dust behind.
+      const running = f.running && f.grounded && !f.hidden;
+      const way = Math.sign(f.vx) || fc;
+      sprite.setRotation(running ? way * 0.12 : 0);
+      this.runDust ??= [];
+      if (running && this.anim - (this.runDust[i] ?? -1) > 0.1) {
+        this.runDust[i] = this.anim;
+        this.dust(f.x - way * 6, f.y, 0.3);
+      }
       // Jinxed by the lamp: shrunk.
       if (f.jinxed) sprite.setScale(sprite.scaleX * 0.75, sprite.scaleY * 0.75);
       // The previous round's winner wears the crown, bobbing as they run, tipped the way they face.
@@ -1633,8 +1674,8 @@ export class Renderer {
       }
     };
     // Only the weapon in hand is drawn (a weapon mid-swing finishes its swing).
-    holdWeapon(this.katanas[i], f.chain || f.active !== 'gun' ? null : f.blade, true, 0);
-    holdWeapon(this.blades[i], f.active === 'melee' || swinging === f.melee ? f.melee : null, true, 1);
+    this.katanas[i].setVisible(false); // (the trident's head, out on its chain: below)
+    holdWeapon(this.blades[i], !f.chain && (f.active === 'melee' || swinging === f.melee) ? f.melee : null, true, 1);
     if (f.chain && !f.hidden) {
       // The trident out on its chain: links from the hand to its head, which points away from you.
       const hx = ox + Math.cos(ang) * 6;
@@ -1689,7 +1730,7 @@ export class Renderer {
     }
     // The weapon not in hand, slung across the back: greyed, slanted, wobbling as you move.
     const back = this.backs[i];
-    const backKey = f.active === 'gun' ? f.melee : f.hasGun ? f.gun : f.blade;
+    const backKey = f.active === 'gun' ? f.melee : f.hasGun ? f.gun : null;
     if (backKey && !f.hidden && this.scene.textures.exists(backKey) && !f.chain) {
       if (back.texture.key !== backKey) back.setTexture(backKey);
       const wobble = f.walk > 0 ? Math.sin(f.walk * 1.6) * 0.14 : Math.sin(this.anim * 2 + i) * 0.03;
@@ -1725,7 +1766,7 @@ export class Renderer {
     if ((f.blocking || f.dropping) && !f.hidden && this.handImgs) {
       const gx = x + fc * 8;
       const gy = y - 20;
-      const img = f.blade ? this.katanas[i] : this.blades[i];
+      const img = this.blades[i];
       if (img.visible) {
         img.setPosition(gx, gy + 6).setRotation(-Math.PI / 2).setFlipY(fc < 0).setAlpha(f.blocking ? 1 : 0.6);
         img.setTint(f.blocking ? 0xcfe3ff : 0xffffff).setTintMode(Phaser.TintModes.FILL);
@@ -1857,7 +1898,7 @@ export class Renderer {
         img.setVisible(true).setScale(s).setPosition(wx, y).setAlpha(alpha);
       };
       const fist = this.handKey(f.id);
-      const gunKey = f.hasGun ? f.gun : f.blade ?? fist;
+      const gunKey = f.hasGun ? f.gun : fist;
       // The weapon in hand is bright, with a marker; the other one is dimmed.
       const gunHeld = f.active === 'gun';
       icon(p.gunIcon, gunKey, by + 19, 32, 13, gunKey === fist ? 0.3 : gunHeld ? 1 : 0.35);

@@ -1,5 +1,5 @@
 // What the renderer needs from the world: drawn locally, and sent by the host to guests ~30×/s.
-import { GUNS, GRENADES, LOOT, ITEMS, HAVEN, GUN_THROW, AMMO_CHEST, STYLE, ANIMALS } from './constants.js';
+import { GUNS, GRENADES, LOOT, ITEMS, HAVEN, GUN_THROW, DROPS, AMMO_CHEST, STYLE, ANIMALS } from './constants.js';
 import { stormStatus, sparesOf } from './world.js';
 
 const r1 = (n) => Math.round(n * 10) / 10;
@@ -23,11 +23,11 @@ export function toView(world) {
       aimX: r2(f.aimX),
       aimY: r2(f.aimY),
       grounded: f.grounded,
+      running: f.run >= 0,
       damage: Math.floor(f.damage),
       stocks: f.stocks,
       state: f.state,
       melee: f.melee,
-      blade: f.blade,
       // The swing in progress: time since it started, its direction and the weapon swinging
       // (null = fists); the renderer animates the arc.
       // (jab: a jab, not the heavy swing.)
@@ -127,7 +127,8 @@ export function toView(world) {
     // Where the portals are now ([x, y] each), none if they're gone.
     portals: (world.portalsAt ?? []).map((p) => [r1(p.x), r1(p.y)]),
     // (blink: an empty gun about to vanish.)
-    pickups: world.pickups.map((p) => ({ id: p.id, x: p.x, y: p.y, weapon: p.weapon, blink: p.ammo === 0 && p.t > GUN_THROW.emptyLife - GUN_THROW.emptyBlink })),
+    // (A knocked-out fighter's drops: floating down (air), then blinking before they go.)
+    pickups: world.pickups.map((p) => ({ id: p.id, x: p.x, y: p.y - (p.fall ?? 0), air: p.fall > 0, weapon: p.weapon, blink: (p.ammo === 0 && p.t > GUN_THROW.emptyLife - GUN_THROW.emptyBlink) || (p.life !== undefined && !p.fall && p.life < DROPS.blink) })),
     covers: world.covers.map((c) => (c.gone ? 0 : { hp: Math.ceil(c.hp), max: c.max, flash: c.flash > 0 })),
     barrels: world.barrels.map((b) => (b.gone ? 0 : b.flash > 0 || (b.fuse >= 0 && Math.floor(b.fuse * 30) % 2 === 0) ? 2 : 1)),
     storm: { left: r1(s.left), right: r1(s.right), wallLeft: r1(s.wallLeft), wallRight: r1(s.wallRight), text: status.text, next: status.next && [r1(status.next[0]), r1(status.next[1])] },

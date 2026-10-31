@@ -227,10 +227,11 @@ export class Room {
         if (typeof msg.s === 'number') p.ms = Math.max(0, Math.round(now - msg.s));
         break;
       case 'char': {
-        if (!CHARACTERS.includes(msg.char)) break;
+        // (From the room, for the next match: a character, or null for Random.)
+        if (msg.char !== null && !CHARACTERS.includes(msg.char)) break;
         p.char = msg.char;
         const f = this.fighterOf(i);
-        if (f >= 0) this.match.chars[f] = msg.char;
+        if (f >= 0 && msg.char) this.match.chars[f] = msg.char;
         break;
       }
       case 'duel':
