@@ -2,7 +2,10 @@
 // knight: tools/bugbicho_art.py; Betowing is the skeleton knight repainted as a pilot:
 // tools/betowing_art.py; the turtle knight is the knight repainted: tools/turtle_art.py; Saopato
 // is the knight as a duck, three looks: tools/saopato_art.py; Frampersand (and Frampersand.dev)
-// is the rogue as a fox: tools/fox_art.py):
+// is the rogue as a fox: tools/fox_art.py; Dj Cuirox is the orc warrior as a DJ:
+// tools/dj_art.py; The Doctor is the orc rogue as a field medic: tools/medic_art.py; the Legendary
+// Fisherman (and his Oxa Mode) is the orc warrior shirtless, with fish on his back:
+// tools/fisher_art.py):
 // public/art/chars/<name>-idle|run|stun|fall|sleep.png. Each match deals everyone a different
 // character at random (pickCast); the host sends the picks to guests.
 export const CHARACTERS = [
@@ -14,7 +17,18 @@ export const CHARACTERS = [
   'turtle',
   'saopato', 'caballero-pato-real', 'caballero-pato-falso',
   'frampersand', 'frampersand.dev',
+  'dj-cuirox',
+  'the-doctor',
+  'legendary-fisherman', 'legendary-fisherman-oxa',
 ];
+
+// Names that can't be read off the id (which is the name, words capitalised: see charLabel in
+// main.js).
+export const CHAR_NAMES = { 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)' };
+
+// The characters with hands of their own (public/art/hand-<name>.png, in their skin or gloves);
+// the rest: the skeletons' and orcs' (by name), else the usual. (Bugbicho's three share one.)
+export const OWN_HANDS = ['bugbicho', 'betowing', 'dj-cuirox', 'the-doctor', 'legendary-fisherman'];
 
 // Saopato's three looks.
 const DUCKS = ['saopato', 'caballero-pato-real', 'caballero-pato-falso'];

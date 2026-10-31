@@ -16,7 +16,7 @@ import { koLine } from './kolines.js';
 import { buildDungeon, buildMovers, isDungeon, DUNGEON_LOOKS } from './dungeon.js';
 import { getStage } from '../sim/stage.js';
 import { PLAYER_COLORS, FONT } from './palette.js';
-import { CHARACTERS, POSES } from './cast.js';
+import { CHARACTERS, POSES, OWN_HANDS } from './cast.js';
 import { Sfx } from './audio.js';
 
 const PANEL_W = 120;
@@ -1274,10 +1274,12 @@ export class Renderer {
     if (this.sky) this.sky.tilePositionX = cam.scrollX * 0.05;
   }
 
-  // A character's floating hands: bony for the skeletons, green for the orcs, else the usual.
+  // A character's floating hands: their own (see OWN_HANDS), bony for the skeletons, green for
+  // the orcs, else the usual.
   handKey(i) {
     const c = this.chars[i] ?? '';
-    const key = c.startsWith('skeleton') ? 'hand-skeleton' : c.startsWith('orc') ? 'hand-orc' : c.startsWith('bugbicho') ? 'hand-bugbicho' : c === 'betowing' ? 'hand-betowing' : 'hand';
+    const own = OWN_HANDS.find((n) => c === n || c.startsWith(`${n}-`));
+    const key = own ? `hand-${own}` : c.startsWith('skeleton') ? 'hand-skeleton' : c.startsWith('orc') ? 'hand-orc' : 'hand';
     return this.scene.textures.exists(key) ? key : 'hand';
   }
 

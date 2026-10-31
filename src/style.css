@@ -293,6 +293,100 @@ summary:focus-visible {
   text-align: center;
 }
 
+/* Your name and, beside it, your character (the button opens the picker: main.js). */
+.who {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: end;
+  gap: 12px;
+}
+
+.char-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 64px;
+  padding: 4px 14px 4px 8px;
+  font: 0.95rem/1 var(--display);
+  color: var(--text);
+  background: #232951;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.char-button:hover {
+  background: #2c3366;
+}
+
+/* A character's first idle frame (main.js sizes it), feet on the bottom; Random: a question mark. */
+.char-thumb {
+  display: grid;
+  place-items: center;
+  flex: none;
+  background-repeat: no-repeat;
+  background-position: 0 0;
+  image-rendering: pixelated;
+  font: 1.6rem var(--display);
+  color: var(--muted);
+}
+
+.char-button .char-thumb {
+  align-self: end;
+}
+
+.char-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 18px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.char-dialog::backdrop {
+  background: rgba(6, 8, 18, 0.7);
+}
+
+.char-dialog h2 {
+  margin: 0 0 12px;
+  font: 1.3rem var(--display);
+}
+
+.char-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.char-tile {
+  display: grid;
+  justify-items: center;
+  align-content: end;
+  gap: 6px;
+  min-height: 124px;
+  padding: 8px 4px;
+  font: 0.8rem/1.2 var(--display);
+  color: var(--text);
+  background: #1a1f40;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.char-tile:hover,
+.char-tile:focus-visible {
+  background: #2c3366;
+}
+
+.char-tile.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
 @media (max-width: 560px) {
   .bar-in {
     padding-left: 26px;

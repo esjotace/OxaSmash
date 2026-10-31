@@ -16,7 +16,7 @@ import { createBot, botInput, configureBot } from '../bots/bot.js';
 import { Controls } from './controls.js';
 import { Spectator } from './spectate.js';
 import { Renderer, CITY, CHARACTERS, makeCharacterAnims } from './render.js';
-import { IDLE_H, IDLE_W } from './cast.js';
+import { IDLE_H, IDLE_W, OWN_HANDS } from './cast.js';
 import { settings } from './settings.js';
 import { SOUNDS } from './audio.js';
 import { STAGES, DEFAULT_STAGE, isStageId } from '../sim/stage.js';
@@ -30,7 +30,7 @@ const LATE_SHOT = { after: 1, ease: 22, max: 600 }; // ticks late to count; catc
 // Real art, where it exists (public/art/). Anything missing falls back to the greybox shapes.
 // Loaded by the match (only what isn't already), or ahead of it: see warmUp in game.js.
 export function loadArt(scene) {
-  for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'hand-skeleton', 'hand-orc', 'hand-bugbicho', 'hand-betowing', 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!scene.textures.exists(key)) scene.load.image(key, `art/${key}.png`);
+  for (const key of [...CITY.far, ...CITY.near, ...Object.keys(MELEE), ...Object.keys(GUNS), ...Object.keys(GRENADES), 'sky', 'barrel', ...COVER_ART, 'hand', 'hand-skeleton', 'hand-orc', ...OWN_HANDS.map((n) => `hand-${n}`), 'crown', 'carrot-rotten', 'chest', ...Object.keys(ITEMS)]) if (!scene.textures.exists(key)) scene.load.image(key, `art/${key}.png`);
   if (!scene.textures.exists('village')) scene.load.image('village', 'art/village/tiles.png');
   // Cloud puffs (smoke, poison, spore patches): animation strips of 64×64 frames.
   // Controller button pictures: 16×16 frames (see padicons.js).

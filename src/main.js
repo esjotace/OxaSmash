@@ -9,7 +9,7 @@ import { RULES, GUNS, MELEE, GRENADES, ITEMS } from './sim/constants.js';
 import { describe } from './sim/describe.js';
 import { hasIcon, iconFrame, BUTTONS_PER_ROW, ICON_STYLES } from './game/padicons.js';
 import { STAGES, DEFAULT_STAGE, MIXED, isStageId, rollStage } from './sim/stage.js';
-import { CHARACTERS, IDLE_W, pickCast } from './game/cast.js';
+import { CHARACTERS, CHAR_NAMES, IDLE_W, IDLE_H, pickCast } from './game/cast.js';
 import { startPadNav } from './padnav.js';
 import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
 
@@ -1295,7 +1295,7 @@ for (const [id, key] of [['volMaster', 'master'], ['volEffects', 'effects'], ['v
 
 // Character: Random, then the cast; the idle animation and the name.
 const CHOICES = [null, ...CHARACTERS];
-const charLabel = (c) => (c ? c.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') : 'Random');
+const charLabel = (c) => (c ? CHAR_NAMES[c] ?? c.split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join(' ') : 'Random');
 function renderCharacter() {
   const c = deviceSettings(editing.player).character;
   $('charSprite').style.backgroundImage = c ? `url(art/chars/${c}-idle.png)` : 'none';
@@ -1306,16 +1306,57 @@ function renderCharacter() {
   $('charSprite').textContent = c ? '' : '?';
   $('charName').textContent = charLabel(c);
 }
+// A character's first idle frame, drawn `scale` times (Random: a question mark).
+function charThumb(el, c, scale) {
+  const [w, h] = c ? [IDLE_W(c), IDLE_H(c)] : [32, 32];
+  Object.assign(el.style, { width: `${w * scale}px`, height: `${h * scale}px`, backgroundImage: c ? `url(art/chars/${c}-idle.png)` : 'none', backgroundSize: `${w * 4 * scale}px ${h * scale}px` });
+  el.textContent = c ? '' : '?';
+}
 function stepCharacter(by) {
   const mine = deviceSettings(editing.player);
   const i = Math.max(0, CHOICES.indexOf(mine.character));
   mine.character = CHOICES[(i + by + CHOICES.length) % CHOICES.length];
   saveSettings();
   renderCharacter();
+  renderCharButton();
   if (mine.character) gameModule?.then((m) => m.setCharacter(mine.character, editing.player));
 }
 $('charPrev').onclick = () => stepCharacter(-1);
 $('charNext').onclick = () => stepCharacter(1);
+
+// The main screen's character button (beside your name): yours, the keyboard player's, the one Solo
+// and Online deal you. It opens a picker: Random and the whole cast, yours lit.
+function renderCharButton() {
+  const c = deviceSettings('kbm').character;
+  charThumb($('charThumb'), c, 1.5);
+  $('charButtonName').textContent = charLabel(c);
+}
+$('charButton').onclick = () => {
+  const mine = deviceSettings('kbm').character ?? null;
+  $('charGrid').replaceChildren(
+    ...CHOICES.map((c) => {
+      const tile = document.createElement('button');
+      tile.className = 'char-tile' + (c === mine ? ' on' : '');
+      const pic = document.createElement('span');
+      pic.className = 'char-thumb';
+      charThumb(pic, c, 2);
+      tile.append(pic, charLabel(c));
+      tile.onclick = () => {
+        deviceSettings('kbm').character = c;
+        saveSettings();
+        renderCharButton();
+        $('charDialog').close();
+      };
+      return tile;
+    }),
+  );
+  $('charDialog').showModal();
+  $('charGrid').querySelector('.on')?.focus();
+};
+$('charClose').onclick = () => $('charDialog').close();
+// (A click on the backdrop, outside the picker, closes it too.)
+$('charDialog').addEventListener('click', (e) => e.target === $('charDialog') && $('charDialog').close());
+renderCharButton();
 
 // Key and controller bindings: click one, then press the new key or button (Esc cancels).
 // The controller in a controller slot ('pad0'..'pad3'), or, for the first, the first one found.

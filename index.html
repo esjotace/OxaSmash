@@ -64,7 +64,19 @@
           </section>
         </div>
 
-        <label class="field name">Your name <input id="name" maxlength="12" autocomplete="off" spellcheck="false" /></label>
+        <!-- Who you are: your name, and your character (Random or one of the cast; it opens the picker). -->
+        <div class="who">
+          <label class="field name">Your name <input id="name" maxlength="12" autocomplete="off" spellcheck="false" /></label>
+          <div class="field">
+            Your character
+            <button id="charButton" class="char-button" aria-haspopup="dialog"><span id="charThumb" class="char-thumb"></span><span id="charButtonName"></span></button>
+          </div>
+        </div>
+        <dialog id="charDialog" class="char-dialog">
+          <h2>Your character</h2>
+          <div id="charGrid" class="char-grid"></div>
+          <div class="row"><button id="charClose" class="btn ghost">Close</button></div>
+        </dialog>
 
         <!-- The guide, in Spanish and on purpose a bit silly: the short table first (for whoever only
              looks), the deep stuff after (for whoever min-maxes). Keys and buttons: the defaults in
