@@ -29,11 +29,16 @@ export const CHARACTERS = [
 // main.js).
 export const CHAR_NAMES = { 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)', jrazor: 'JRazor' };
 
-// The characters with hands of their own (public/art/hand-<name>.png, in their skin or gloves);
-// the rest: the skeletons' and orcs' (by name), else the usual. (Bugbicho's three share one.)
-export const OWN_HANDS = ['bugbicho', 'betowing', 'dj-cuirox', 'the-doctor', 'legendary-fisherman', 'jrazor'];
-// And those borrowing someone else's: Minion Chamolon wears Betowing's white gloves.
-export const BORROWED_HANDS = { 'minion-chamolon': 'betowing' };
+// The characters with hands of their own (public/art/hand-<name>.png, in their skin or gloves;
+// the plain-coloured ones from tools/hand_tints.py); the rest: the skeletons' and orcs' (by
+// name), else the usual. (Bugbicho's three share one.)
+export const OWN_HANDS = [
+  'bugbicho', 'betowing', 'dj-cuirox', 'the-doctor', 'legendary-fisherman', 'jrazor',
+  'knight', 'turtle', 'saopato', 'caballero-pato-real', 'caballero-pato-falso', 'frampersand',
+];
+// And those borrowing someone else's: Minion Chamolon wears Betowing's white gloves,
+// Frampersand.dev Frampersand's dark ones.
+export const BORROWED_HANDS = { 'minion-chamolon': 'betowing', 'frampersand.dev': 'frampersand' };
 
 // Saopato's three looks.
 const DUCKS = ['saopato', 'caballero-pato-real', 'caballero-pato-falso'];
