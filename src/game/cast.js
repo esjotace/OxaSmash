@@ -5,7 +5,8 @@
 // is the rogue as a fox: tools/fox_art.py; Dj Cuirox is the orc warrior as a DJ:
 // tools/dj_art.py; The Doctor is the orc rogue as a field medic: tools/medic_art.py; the Legendary
 // Fisherman (and his Oxa Mode) is the orc warrior shirtless, with fish on his back:
-// tools/fisher_art.py):
+// tools/fisher_art.py; Minion Chamolon is the rogue as a red minion: tools/chamolon_art.py;
+// JRazor is the skeleton rogue as a terminator: tools/jrazor_art.py):
 // public/art/chars/<name>-idle|run|stun|fall|sleep.png. Each match deals everyone a different
 // character at random (pickCast); the host sends the picks to guests.
 export const CHARACTERS = [
@@ -20,23 +21,27 @@ export const CHARACTERS = [
   'dj-cuirox',
   'the-doctor',
   'legendary-fisherman', 'legendary-fisherman-oxa',
+  'minion-chamolon',
+  'jrazor',
 ];
 
 // Names that can't be read off the id (which is the name, words capitalised: see charLabel in
 // main.js).
-export const CHAR_NAMES = { 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)' };
+export const CHAR_NAMES = { 'legendary-fisherman-oxa': 'Legendary Fisherman (Oxa Mode)', jrazor: 'JRazor' };
 
 // The characters with hands of their own (public/art/hand-<name>.png, in their skin or gloves);
 // the rest: the skeletons' and orcs' (by name), else the usual. (Bugbicho's three share one.)
-export const OWN_HANDS = ['bugbicho', 'betowing', 'dj-cuirox', 'the-doctor', 'legendary-fisherman'];
+export const OWN_HANDS = ['bugbicho', 'betowing', 'dj-cuirox', 'the-doctor', 'legendary-fisherman', 'jrazor'];
+// And those borrowing someone else's: Minion Chamolon wears Betowing's white gloves.
+export const BORROWED_HANDS = { 'minion-chamolon': 'betowing' };
 
 // Saopato's three looks.
 const DUCKS = ['saopato', 'caballero-pato-real', 'caballero-pato-falso'];
 
 // Idle frames are usually 32 px tall; taller ones have headroom for something on top
-// (Bugbicho's horn and antennae, Saopato's tuft). Drawn from the feet up, so only the picture
-// grows, never the body.
-export const IDLE_H = (c) => (c.startsWith('bugbicho') || DUCKS.includes(c) ? 40 : 32);
+// (Bugbicho's horn and antennae, Saopato's tuft, Minion Chamolon's crest). Drawn from the feet up,
+// so only the picture grows, never the body.
+export const IDLE_H = (c) => (c.startsWith('bugbicho') || DUCKS.includes(c) || c === 'minion-chamolon' ? 40 : 32);
 // And usually 32 wide; wider ones have room at the sides for something sticking out (Frampersand's
 // tail). Centred on the feet, so again only the picture grows.
 export const IDLE_W = (c) => (c.startsWith('frampersand') ? 48 : 32);
