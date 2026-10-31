@@ -518,9 +518,9 @@ for (const [key, m] of [['fists', STRIKE], ...Object.entries(MELEE)]) {
 // their slot).
 export const PICKUPS = {
   every: 8, // seconds between new pickups
-  // At most this many of each lying around at once: weapons (guns and melee weapons), grenades,
-  // items. (What a knocked-out fighter drops doesn't count: see DROPS.)
-  caps: { weapon: 4, grenade: 4, item: 4 },
+  // At most this many of each lying around at once: guns, melee weapons, grenades, items. (What a
+  // knocked-out fighter drops doesn't count: see DROPS.)
+  caps: { gun: 3, melee: 3, grenade: 4, item: 4 },
   firstAfter: 4,
   shrineEvery: 6, // a weapon shrine gets a new weapon this long after its last one is taken
   // What appears: the share of melee weapons, guns (never the pistol) and grenades.
@@ -631,9 +631,23 @@ export const PROPS = {
   },
 };
 
+// Barrels: shoot or hit one and it blows up, then comes back later. Other things blow up the same
+// way (Residencia's furniture), each its own size (`kinds`, by a barrel's `kind`). Most are cover:
+// crouch right beside one to tuck in behind it (until it goes off); not the tall shelf, the bed or
+// the long table (cover: false).
 export const BARREL = {
   w: 18,
   h: 24,
+  kinds: {
+    barrel: { w: 18, h: 24 },
+    chair: { w: 14, h: 25 },
+    desk: { w: 44, h: 23 },
+    cabinet: { w: 14, h: 19 },
+    table: { w: 30, h: 21 },
+    shelf: { w: 33, h: 48, cover: false },
+    bed: { w: 48, h: 22, cover: false },
+    longtable: { w: 48, h: 9, cover: false },
+  },
   health: 8,
   blastRadius: 72,
   blastDamage: 15,

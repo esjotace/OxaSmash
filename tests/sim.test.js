@@ -2,10 +2,11 @@
 import { describe, it, expect } from 'vitest';
 import { createWorld, step, swingAngle, rollWord, lineOfSight, spawnWeapon, setHealthRule, thrustReach, gunOrigin, spreadOf } from '../src/sim/world.js';
 import { NEUTRAL, encodeInput, decodeInput } from '../src/sim/input.js';
-import { DROPS, VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
+import { BARREL, DROPS, VENT, WIND, PORTAL, CAT, ANIMALS, SLEEP, DROWSY, MOVERS, SPIKES, ITEMS, LEGENDARY, CROWN, CASH, LOOT, HAVEN, STYLE, GUN_THROW, COMBO, DI, BREAKER, COVER, TILE } from '../src/sim/constants.js';
 import { FIGHTER, PISTOL, STRIKE, STORM, MELEE, LIGHT_MAX_PUSH, LIGHT_THROW, GUNS, GRENADES, HEADSHOT, DASH, GLUE, STAMINA, SWING_HAND, STORM_PACE, PICKUPS, RUN } from '../src/sim/constants.js';
 import { createBot, botInput } from '../src/bots/bot.js';
-import { STAGES, getStage } from '../src/sim/stage.js';
+import { STAGES, getStage, isStageId, isStageChoice, rollStage, RANDOM_THEMES } from '../src/sim/stage.js';
+import { buildThemedStage } from '../src/sim/themed.js';
 import { MELEE_POINTS } from '../src/sim/meleePoints.js';
 
 const FAR_STORM = { startDelay: 999 };
@@ -499,6 +500,28 @@ describe('weapons', () => {
     run(w, 5);
     run(w, 60, (t) => [{ ...NEUTRAL, ax: 1, ay: 0, sp: press(t, 12) }, NEUTRAL]);
     expect(b.damage).toBeGreaterThan(0);
+  });
+
+  it('a barrel is cover too, and so is furniture that blows up like one (and comes back)', () => {
+    const w = world();
+    const [a, b] = w.fighters;
+    place(a, 900, -2);
+    place(b, 1400, -2);
+    run(w, 5);
+    // A desk on the floor at 600; b crouches right beside its right side.
+    w.barrels.push({ x: 600, y: 0, kind: 'desk', hp: BARREL.health, gone: false, fuse: -1, respawn: 0, lastBy: -1, flash: 0 });
+    place(b, 600 + BARREL.kinds.desk.w / 2 + FIGHTER.w / 2 + 2, -2);
+    run(w, 5, () => [NEUTRAL, { ...NEUTRAL, crouch: true }]);
+    expect(b.tucked).toBe(true);
+    // Enough damage and it goes off, then it's back after the barrel's respawn time.
+    const desk = w.barrels.at(-1);
+    desk.hp = 0;
+    desk.fuse = 0;
+    run(w, 2);
+    expect(desk.gone).toBe(true);
+    place(b, 1400, -2);
+    run(w, Math.ceil(BARREL.respawnTime * 60) + 5);
+    expect(desk.gone).toBe(false);
   });
 
   it('crouching right beside cover tucks you fully behind it', () => {
@@ -3455,14 +3478,17 @@ describe('shooting grenades', () => {
 });
 
 describe('pickups: caps and what the knocked out drop', () => {
-  it('weapons, grenades and items each have their own cap', () => {
+  it('guns, melee weapons, grenades and items each have their own cap', () => {
     const w = world();
-    for (let k = 0; k < 4; k++) w.pickups.push({ id: 900 + k, x: 100 + k * 30, y: 0, weapon: 'machete' });
+    for (let k = 0; k < PICKUPS.caps.melee; k++) w.pickups.push({ id: 900 + k, x: 100 + k * 30, y: 0, weapon: 'machete' });
     const before = new Set(w.pickups.map((p) => p.id));
     run(w, 60 * 120);
     const fresh = w.pickups.filter((p) => !before.has(p.id));
     expect(fresh.length).toBeGreaterThan(0);
-    expect(fresh.every((p) => GRENADES[p.weapon] || ITEMS[p.weapon])).toBe(true);
+    // (Melee full: no more melee weapons, but guns still come, up to their own cap.)
+    expect(fresh.some((p) => MELEE[p.weapon])).toBe(false);
+    expect(fresh.some((p) => GUNS[p.weapon])).toBe(true);
+    expect(fresh.filter((p) => GUNS[p.weapon]).length).toBeLessThanOrEqual(PICKUPS.caps.gun);
     expect(fresh.filter((p) => GRENADES[p.weapon]).length).toBeLessThanOrEqual(4);
     expect(fresh.filter((p) => ITEMS[p.weapon]).length).toBeLessThanOrEqual(4);
   });
@@ -3500,5 +3526,107 @@ describe('pickups: caps and what the knocked out drop', () => {
     expect(a.melee).toBe('knife');
     expect(a.throwCd).toBeGreaterThan(2);
     expect(w.bullets.some((b) => b.kind === 'knife' && !b.recover)).toBe(true);
+  });
+});
+
+describe('every stage: nobody starts in the storm', () => {
+  it("spawns are inside the storm's walls at the start, on every stage and random ones", () => {
+    const ids = [...Object.keys(STAGES), ...Array.from({ length: 40 }, (_, k) => `mixed-${k}`), ...['pines', 'castle', 'swamp', 'res'].flatMap((pf) => Array.from({ length: 60 }, (_, k) => `${pf}-${k + 1}`))];
+    for (const id of ids) {
+      const st = getStage(id);
+      if (!st.storm) continue;
+      for (const q of st.spawns) expect(q.x > st.storm.left && q.x < st.storm.right, `${id} spawn at ${q.x}`).toBe(true);
+    }
+  });
+});
+
+describe('random painted stages (themed.js)', () => {
+  const PREFIXES = ['pines', 'castle', 'swamp', 'res'];
+  // Something to stand on right under (x, y): a block's top, or a mover's (a crumbling bridge).
+  const standsOn = (st, q) => [...st.blocks, ...(st.movers ?? [])].some((b) => Math.abs(b.y - q.y) < 1 && q.x >= b.x - 2 && q.x <= b.x + b.w + 2);
+
+  it('every seed builds, the same way each time, with spawns and pickups on something', () => {
+    for (const prefix of PREFIXES) {
+      for (let seed = 1; seed <= 200; seed++) {
+        const id = `${prefix}-${seed}`;
+        const st = getStage(id);
+        expect(st, id).toBeTruthy();
+        expect(JSON.stringify(st), id).toBe(JSON.stringify(buildThemedStage(prefix, seed)));
+        expect(st.spawns.length, id).toBeGreaterThanOrEqual(4);
+        expect(st.pickupSpots.length, id).toBeGreaterThanOrEqual(3);
+        for (const q of [...st.spawns, ...st.pickupSpots]) expect(standsOn(st, q), `${id} ${q.x},${q.y}`).toBe(true);
+        for (const b of st.blocks) expect(b.x >= 0 && b.x + b.w <= 1792, `${id} block at ${b.x}`).toBe(true);
+      }
+    }
+  });
+
+  it('the pines keep their portals on the ground at both ends; the ends are always ground', () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const st = getStage(`pines-${seed}`);
+      for (const q of st.portals) expect(standsOn(st, q), `pines-${seed}`).toBe(true);
+      expect(st.wind).toBeTruthy();
+      // (Each keeps a gap: the pines a ravine, the swamp a bog.)
+      expect(st.sections.some((c) => c.lower === 'ravine'), `pines-${seed}`).toBe(true);
+      expect(getStage(`swamp-${seed}`).water.length, `swamp-${seed}`).toBeGreaterThan(0);
+      for (const pf of ['pines', 'swamp']) {
+        const s = getStage(`${pf}-${seed}`);
+        for (const x of [24, 1792 - 24]) expect(standsOn(s, { x, y: 0 }), `${pf}-${seed} end at ${x}`).toBe(true);
+      }
+    }
+  });
+
+  it('the castle: on one side, its far wall spiked, pits inside it, bridges between the islands', () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const st = getStage(`castle-${seed}`);
+      const c = st.castle;
+      expect(c.x === 0 || c.x + c.w === 1792, `castle-${seed}`).toBe(true);
+      expect(st.spikes.some((s) => s.x === (c.x === 0 ? 0 : 1792 - TILE)), `castle-${seed}`).toBe(true);
+      for (const pit of c.pits) expect(pit.x > c.x && pit.x + pit.w < c.x + c.w, `castle-${seed}`).toBe(true);
+      expect(st.movers.filter((m) => m.look === 'bridge').length, `castle-${seed}`).toBeGreaterThan(0);
+    }
+  });
+
+  it("Residencia: nobody starts, and nothing lies, inside a piece of furniture; no two pieces overlap", () => {
+    for (let seed = 1; seed <= 200; seed++) {
+      const st = getStage(`res-${seed}`);
+      const width = (b) => BARREL.kinds[b.kind ?? 'barrel'].w;
+      st.barrels.forEach((b, i) => st.barrels.slice(i + 1).forEach((o) => expect(o.y === b.y && Math.abs(o.x - b.x) < (width(o) + width(b)) / 2, `res-${seed}: ${b.kind} and ${o.kind}`).toBe(false)));
+      // (Nor a planter or crate with a piece of furniture.)
+      for (const c of st.blocks.filter((k) => k.cover)) for (const b of st.barrels) expect(c.y + c.h === b.y && c.x < b.x + width(b) / 2 && c.x + c.w > b.x - width(b) / 2, `res-${seed}: ${c.look} on a ${b.kind}`).toBe(false);
+      for (const b of st.barrels) {
+        const { w } = BARREL.kinds[b.kind ?? 'barrel'];
+        for (const q of [...st.spawns, ...st.pickupSpots]) {
+          const inside = q.y === b.y && Math.abs(q.x - b.x) < w / 2 + FIGHTER.w / 2;
+          expect(inside, `res-${seed}: ${q.x},${q.y} in a ${b.kind} at ${b.x}`).toBe(false);
+        }
+      }
+    }
+  });
+
+  it('every platform can be reached: some surface within a full double jump below it, close by', () => {
+    // (A jump reaches 64 px, with the air jump 128: a top more than 128 px over everything near it
+    // can't be reached, like a floating island too high up. Sideways, a running jump carries
+    // well over 100 px.)
+    for (const prefix of PREFIXES) {
+      for (let seed = 1; seed <= 200; seed++) {
+        const st = getStage(`${prefix}-${seed}`);
+        const tops = [...st.blocks, ...st.movers.filter((m) => m.kind === 'crumble' || m.kind === 'drift')].filter((b) => !b.cover && !b.lowCover);
+        for (const b of tops) {
+          if (b.y >= -48 || b.look === 'stuffed') continue;
+          const from = tops.some((o) => o !== b && o.y > b.y && o.y - b.y <= 128 && o.x < b.x + b.w + 112 && o.x + o.w > b.x - 112);
+          expect(from, `${prefix}-${seed}: ${b.look} at ${b.x},${b.y}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('menu choices roll into ids every client can build', () => {
+    for (const choice of RANDOM_THEMES) {
+      expect(isStageChoice(choice)).toBe(true);
+      const id = rollStage(choice);
+      expect(isStageId(id), id).toBe(true);
+    }
+    expect(isStageChoice('random-nope')).toBe(false);
+    expect(isStageId('pines-x')).toBe(false);
   });
 });

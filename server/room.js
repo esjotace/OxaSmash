@@ -16,7 +16,7 @@ import { NEUTRAL, decodeInput, encodeInput } from '../src/sim/input.js';
 import { DT, RULES, STORM_PACE } from '../src/sim/constants.js';
 import { pack, fingerprint } from '../src/sim/snapshot.js';
 import { makeWorld } from '../src/net/rollback.js';
-import { isStageId, rollStage, MIXED, DEFAULT_STAGE } from '../src/sim/stage.js';
+import { isStageId, isStageChoice, rollStage, MIXED, DEFAULT_STAGE } from '../src/sim/stage.js';
 import { createBot, botInput } from '../src/bots/bot.js';
 import { CHARACTERS, pickCast } from '../src/game/cast.js';
 import { DuelBoard, DUEL_MODES } from '../src/net/duels.js';
@@ -50,7 +50,7 @@ const ROTATIONS = ['off', 'crown', 'skill'];
 // A guest's suggestion for the next match (the owner can adopt it): a stage and a rule preset,
 // either one optional.
 function cleanSuggestion(s) {
-  const stage = s?.stage === MIXED || isStageId(s?.stage) ? s.stage : null;
+  const stage = isStageChoice(s?.stage) || isStageId(s?.stage) ? s.stage : null;
   const preset = PRESETS.includes(s?.preset) ? s.preset : null;
   return stage || preset ? { stage, preset } : null;
 }
@@ -65,7 +65,7 @@ export function cleanRules(r = {}) {
   return {
     stocks: Math.max(1, Math.min(5, Number.isInteger(r.stocks) ? r.stocks : RULES.stocks)),
     rounds: [1, 3, 5].includes(r.rounds) ? r.rounds : 1,
-    stage: r.stage === MIXED || isStageId(r.stage) ? r.stage : DEFAULT_STAGE,
+    stage: isStageChoice(r.stage) || isStageId(r.stage) ? r.stage : DEFAULT_STAGE,
     rules: {
       melee: on(rules.melee),
       ranged: on(rules.ranged),

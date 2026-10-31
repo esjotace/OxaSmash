@@ -30,7 +30,7 @@ export function createWorld({ players, stage = DEFAULT_STAGE, stocks = RULES.sto
     fighters: [],
     bullets: [],
     nextBullet: 1,
-    barrels: st.barrels.map((b) => ({ x: b.x, y: b.y, hp: BARREL.health, gone: false, fuse: -1, respawn: 0, lastBy: -1, flash: 0 })),
+    barrels: st.barrels.map((b) => ({ x: b.x, y: b.y, kind: b.kind ?? 'barrel', hp: BARREL.health, gone: false, fuse: -1, respawn: 0, lastBy: -1, flash: 0 })),
     spikeCooldown: {},
     // Moving and changing stage pieces (see updateMovers): y, whether they're there (on), and
     // whether they're about to change (warn).
@@ -352,7 +352,9 @@ const headBottom = (v) => bodyRect(v).y + (HEADSHOT.height * bodyHeight(v)) / F.
 // Is low cover right beside this fighter, on the same floor?
 function besideCover(world, f) {
   const half = F.w / 2;
-  return world.standing.some((b) => {
+  // (Cover blocks, and standing barrels and furniture: the kinds that are cover.)
+  const barrels = world.barrels.filter((b) => !b.gone && BARREL.kinds[b.kind]?.cover !== false).map((b) => ({ ...barrelRect(b), cover: true }));
+  return [...world.standing, ...barrels].some((b) => {
     if (!(b.cover || b.lowCover) || Math.abs(b.y + b.h - f.y) > 1) return false;
     const gapRight = b.x - (f.x + half);
     const gapLeft = f.x - half - (b.x + b.w);
@@ -372,12 +374,17 @@ export function solids(world, st = getStage(world.stage)) {
 }
 
 // A spike wall is a solid column with spikes on its `face` side; a spike floor (`up`) is a solid
-// row with the spikes standing on top of it.
-const spikeBase = (s) => (s.up ? { x: s.x, y: s.y + TILE, w: s.width * TILE, h: TILE } : { x: s.x, y: s.y, w: TILE, h: s.height * TILE });
+// row with the spikes standing on top of it; a spiked underside (`down`: icicles, a floating
+// rock's) hangs from a solid row, the spikes pointing down from `y`.
+const spikeBase = (s) =>
+  s.up ? { x: s.x, y: s.y + TILE, w: s.width * TILE, h: TILE } : s.down ? { x: s.x, y: s.y - TILE, w: s.width * TILE, h: TILE } : { x: s.x, y: s.y, w: TILE, h: s.height * TILE };
 const spikeZone = (s) =>
-  s.up ? { x: s.x, y: s.y, w: s.width * TILE, h: TILE + 2 } : { x: s.face > 0 ? s.x + TILE : s.x - SPIKES.depth, y: s.y, w: SPIKES.depth + 2, h: s.height * TILE };
+  s.up || s.down ? { x: s.x, y: s.down ? s.y - 2 : s.y, w: s.width * TILE, h: TILE + 2 } : { x: s.face > 0 ? s.x + TILE : s.x - SPIKES.depth, y: s.y, w: SPIKES.depth + 2, h: s.height * TILE };
 
-const barrelRect = (b) => ({ x: b.x - BARREL.w / 2, y: b.y - BARREL.h, w: BARREL.w, h: BARREL.h, barrel: b });
+const barrelRect = (b) => {
+  const { w, h } = BARREL.kinds[b.kind] ?? BARREL;
+  return { x: b.x - w / 2, y: b.y - h, w, h, barrel: b };
+};
 // The hurtbox: same for every animation, shorter while crouching.
 const bodyRect = (f) => ({ x: f.x - F.w / 2, y: f.y - bodyHeight(f), w: F.w, h: bodyHeight(f) });
 
@@ -1985,13 +1992,13 @@ function updatePickups(world, st) {
 }
 
 // What a pickup counts as, for the caps (PICKUPS.caps): a weapon (gun or melee), a grenade, an item.
-const capOf = (weapon) => (GRENADES[weapon] ? 'grenade' : ITEMS[weapon] ? 'item' : 'weapon');
+const capOf = (weapon) => (GRENADES[weapon] ? 'grenade' : ITEMS[weapon] ? 'item' : GUNS[weapon] ? 'gun' : 'melee');
 
 // The kinds of pickup still under their cap (what a knocked-out fighter dropped doesn't count).
 function underCap(world) {
-  const n = { weapon: 0, grenade: 0, item: 0 };
+  const n = { gun: 0, melee: 0, grenade: 0, item: 0 };
   for (const p of world.pickups) if (p.life === undefined) n[capOf(p.weapon)]++;
-  return { melee: n.weapon < PICKUPS.caps.weapon, gun: n.weapon < PICKUPS.caps.weapon, grenade: n.grenade < PICKUPS.caps.grenade, item: n.item < PICKUPS.caps.item };
+  return Object.fromEntries(Object.keys(n).map((k) => [k, n[k] < PICKUPS.caps[k]]));
 }
 
 // A knocked-out fighter's weapons float down into the middle of what's left of the arena (DROPS):
@@ -2440,7 +2447,8 @@ function updateBarrels(world) {
     b.flash = Math.max(0, b.flash - DT);
     if (b.gone) {
       b.respawn -= DT;
-      const blocked = world.fighters.some((f) => f.state === 'ok' && Math.abs(f.x - b.x) < 14 && Math.abs(f.y - b.y) < 30);
+      // (Not back while anyone's where it stands: wide furniture too.)
+      const blocked = world.fighters.some((f) => f.state === 'ok' && overlaps(barrelRect(b), bodyRect(f)));
       if (b.respawn <= 0 && !blocked) Object.assign(b, { gone: false, hp: BARREL.health, lastBy: -1 });
       continue;
     }
@@ -2499,11 +2507,13 @@ function updateSpikes(world, st) {
       if (f.state !== 'ok' || world.spikeCooldown[f.id] !== undefined) continue;
       if (!overlaps(zone, bodyRect(f))) continue;
       world.spikeCooldown[f.id] = SPIKES.cooldown;
-      // Walls push you away from the wall; floors pop you up, a little away from the middle.
-      const [dx, dy] = s.up ? [Math.sign(f.x - (s.x + (s.width * TILE) / 2)) * 0.3, -1] : [s.face, -0.6];
+      // Walls push you away from the wall; floors pop you up, undersides knock you down, a little
+      // away from the middle.
+      const aside = Math.sign(f.x - (s.x + ((s.width ?? 1) * TILE) / 2)) * 0.3;
+      const [dx, dy] = s.up ? [aside, -1] : s.down ? [aside, 1] : [s.face, -0.6];
       using('spikes');
       hit(world, f, SPIKES.damage, dx, dy, SPIKES.knockback, SPIKES.knockbackGrowth, -1, Infinity, true);
-      world.events.push({ type: 'spark', x: f.x, y: f.y - F.h / 2, dx, dy: s.up ? -1 : -0.5 });
+      world.events.push({ type: 'spark', x: f.x, y: f.y - F.h / 2, dx, dy: s.up ? -1 : s.down ? 1 : -0.5 });
     }
   }
 }

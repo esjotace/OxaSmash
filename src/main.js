@@ -8,7 +8,7 @@ import { PLAYER_COLORS } from './game/palette.js';
 import { RULES, GUNS, MELEE, GRENADES, ITEMS } from './sim/constants.js';
 import { describe } from './sim/describe.js';
 import { hasIcon, iconFrame, BUTTONS_PER_ROW, ICON_STYLES } from './game/padicons.js';
-import { STAGES, DEFAULT_STAGE, MIXED, isStageId, rollStage } from './sim/stage.js';
+import { STAGES, DEFAULT_STAGE, MIXED, isStageId, isStageChoice, rollStage } from './sim/stage.js';
 import { CHARACTERS, CHAR_NAMES, IDLE_W, IDLE_H, pickCast } from './game/cast.js';
 import { startPadNav } from './padnav.js';
 import { settings, ui, firstPad, padStyle, padButtonName, padActionName, saveSettings, deviceSettings, padBindings, deviceLabel, DEVICE_SLOTS, KEY_ACTIONS, PAD_ACTIONS, DEFAULT_KEYS, DEFAULT_PAD, keyName } from './game/settings.js';
@@ -141,9 +141,9 @@ function playerRow(name, colorIndex, tag) {
 
 // The stage picked in a menu (a stage, or MIXED for a random one), or the default if the choice
 // isn't a known stage.
-const stageFrom = (id) => (Object.hasOwn(STAGES, $(id).value) || $(id).value === MIXED ? $(id).value : DEFAULT_STAGE);
+const stageFrom = (id) => (isStageChoice($(id).value) ? $(id).value : DEFAULT_STAGE);
 // The stages every stage picker offers (the first one picked to start with).
-const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['dungeon', 'Dungeon'], ['village', 'Village'], ['warehouse', 'Warehouse'], ['bajaita', 'La Bajaita'], ['azotea', 'La Azotea'], ['swamp', 'El Pantano'], ['castle', 'El Castillo'], ['pines', 'Pinar Nevado'], ['residencia', 'Residencia']];
+const STAGE_CHOICES = [[MIXED, 'Random dungeon'], ['random-pines', 'Random Pinar Nevado'], ['random-castle', 'Random Castillo'], ['random-swamp', 'Random Pantano'], ['random-res', 'Random Residencia'], ['dungeon', 'Dungeon'], ['village', 'Village'], ['warehouse', 'Warehouse'], ['bajaita', 'La Bajaita'], ['azotea', 'La Azotea'], ['swamp', 'El Pantano'], ['castle', 'El Castillo'], ['pines', 'Pinar Nevado'], ['residencia', 'Residencia']];
 
 // extra: { rules, stormPace } for Same screen matches.
 function playLocal(roster, stocks, stage = MIXED, training = false, extra = {}) {
@@ -174,7 +174,7 @@ function playTraining() {
   const roster = [{ name: myName(), kind: 'kbm' }];
   for (let i = 1; i <= d.count; i++) roster.push({ name: d.count > 1 ? `Dummy ${i}` : 'Dummy', kind: 'bot', level: d.level });
   // (A random stage is rolled again each time.)
-  playLocal(roster, RULES.stocks, Object.hasOwn(STAGES, d.stage) || d.stage === MIXED ? d.stage : 'training', true, { dummies: d });
+  playLocal(roster, RULES.stocks, isStageChoice(d.stage) ? d.stage : 'training', true, { dummies: d });
 }
 
 // ---- Performance log (?perf) ------------------------------------------------------
@@ -399,7 +399,7 @@ $('setupNext').onclick = () => {
   state.series = rounds > 1 ? { rounds, wins: roster.map(() => 0), round: 1 } : null;
   state.crownName = null;
   const extra = { rules: localRules.read().rules, stormPace: $('ruleStorm').value, crownRule: $('ruleCrown').value };
-  const stage = Object.hasOwn(STAGES, $('ruleStage').value) || $('ruleStage').value === MIXED ? $('ruleStage').value : DEFAULT_STAGE;
+  const stage = isStageChoice($('ruleStage').value) ? $('ruleStage').value : DEFAULT_STAGE;
   playLocal(roster, Number($('ruleLives').value), stage, false, extra);
 };
 
@@ -454,7 +454,7 @@ showRotationHint();
 
 // The rules as set on the rules screen.
 function roomRules() {
-  const stage = Object.hasOwn(STAGES, $('roomStage').value) || $('roomStage').value === MIXED ? $('roomStage').value : DEFAULT_STAGE;
+  const stage = isStageChoice($('roomStage').value) ? $('roomStage').value : DEFAULT_STAGE;
   const { preset, rules } = roomPicker.read();
   return { stocks: Number($('roomLives').value) || RULES.stocks, rounds: Number($('roomRounds').value) || 1, stage, preset, rules, stormPace: $('roomStorm').value, crownRule: $('roomCrown').value, rotation: $('roomRotation').value };
 }

@@ -3,12 +3,12 @@
 // stages' gadgets (drifting logs, gas vents, portals, the wind and its blizzard). Looks only; the
 // rules use stage.js. Art: public/art/<theme>/ (tools/stage_art.py).
 import { TILE, VENT, PORTAL } from '../sim/constants.js';
-import { woodRun, register, spikeArt } from './dungeon.js';
+import { woodRun, register, spikeArt, glueCoat, buildMovers } from './dungeon.js';
 
 export const SCENERY_THEMES = ['swamp', 'castle', 'pines', 'retro'];
 export const isScenery = (st) => SCENERY_THEMES.includes(st.theme);
 // Block looks drawn here (the shared renderer skips them).
-export const SCENERY_LOOKS = new Set(['moss', 'mossledge', 'swampthin', 'ventrock', 'earth', 'stone', 'bridge', 'plank', 'snow', 'snowledge', 'rooftop', 'rooftopteal', 'truss', 'tank', 'deck', 'resfloor', 'resplank', 'stuffed']);
+export const SCENERY_LOOKS = new Set(['moss', 'mossledge', 'swampthin', 'ventrock', 'earth', 'stone', 'bridge', 'plank', 'snow', 'snowledge', 'pond', 'rooftop', 'rooftopteal', 'truss', 'tank', 'deck', 'resfloor', 'resplank', 'stuffed', 'furniture']);
 
 // What each theme loads (public/art/<theme>/<name>.png, as `<theme>-<name>`); sheets are animated:
 // [frame width, height].
@@ -21,7 +21,7 @@ export const SCENERY_ART = {
     images: ['bg1', 'bg2', 'bg3', 'bg4', 'bg5', 'g-tl', 'g-t', 'g-tr', 'g-l', 'g-m', 'g-r', 'g-bl', 'g-b', 'g-br', 'pine1', 'pine7', 'pine8', 'bigpine', 'tent', 'bigtent'],
     sheets: { portal: [64, 64], campfire: [32, 32], blizzard: [242, 137] },
   },
-  retro: { images: ['roof', 'brick', 'teal', 'window', 'deck', 'truss', 'truss-v', 'tower', 'neon', 'ac', 'bench', 'fence', 'bin', 'bush', 'vent', 'stripes', 'awning'] },
+  retro: { images: ['roof', 'brick', 'teal', 'window', 'deck', 'truss', 'truss-v', 'tower', 'neon', 'ac', 'bench', 'fence', 'bin', 'bush', 'vent', 'stripes', 'awning', 'shelf', 'desk', 'table', 'bed', 'longtable', 'chair', 'cabinet'] },
 };
 
 const has = (scene, key) => scene.textures.exists(key);
@@ -96,11 +96,15 @@ export function buildScenery(scene, st, hooks = {}) {
   out.push(underLayer);
 
   // ---- Props behind the stage, the stage's own dressing, blocks, then props in front. ----
-  const props = (front) => {
+  // (room: furniture inside Residencia's rooms, drawn over their back walls.)
+  const props = (front, room = false) => {
     for (const p of st.props ?? []) {
-      if (!!p.front !== front || !has(scene, p.key)) continue;
+      if (!!p.front !== front || !!p.room !== room || !has(scene, p.key)) continue;
       const o = img(scene, p.key, p.x, p.y, 0.5, 1).setFlipX(!!p.flip).setScale(p.scale ?? 1);
-      if (p.tint) o.setTint(p.tint);
+      // (The swamp's rocks: greyed, part of the scenery.)
+      // (The mossy rock is the vents' own picture: greyed too, so it isn't taken for one.)
+      const tint = p.tint ?? (p.key.startsWith('swamp-stone') || p.key === 'swamp-bush1' ? 0x8d909c : null);
+      if (tint) o.setTint(tint);
       if (p.alpha) o.setAlpha(p.alpha);
       out.push(o);
     }
@@ -110,8 +114,18 @@ export function buildScenery(scene, st, hooks = {}) {
   props(false);
   const front = [];
   if (st.houses) out.push(...houseRooms(scene, st, k, depth));
-  for (const b of st.blocks) out.push(...drawBlock(scene, theme, k, b, depth));
-  // The castle's spikes: the dungeon's.
+  props(false, true);
+  // (The pines' ice spikes behind the snow they stick out of or hang from.)
+  if (theme === 'pines') out.push(iceSpikes(scene, st.spikes));
+  // (Ground that runs on into more of the same ground, at the same height, has no edge there: a
+  // patch of sticky mud in a bank, say.)
+  const joins = (b, side) => st.blocks.some((o) => o !== b && o.look === b.look && o.y === b.y && (side < 0 ? o.x + o.w === b.x : b.x + b.w === o.x));
+  for (const b of st.blocks) out.push(...drawBlock(scene, theme, k, { ...b, joinL: joins(b, -1), joinR: joins(b, 1) }, depth));
+  // Sticky floors: a coat of glue over the top.
+  const glue = scene.add.graphics();
+  for (const b of st.blocks) if (b.glue) glueCoat(glue, b.x, b.y, b.w);
+  out.push(glue);
+  // The castle's spikes: the dungeon's. The pines': ice.
   if (theme === 'castle') out.push(...spikeArt(scene, st.spikes));
   if (st.houses) front.push(...houseFronts(scene, st, k));
   // The vents' mossy rocks (drawn here so they can shake: see update).
@@ -142,6 +156,12 @@ export function buildScenery(scene, st, hooks = {}) {
   // Movers (the renderer moves them): drifting logs; small stone ledges that crumble (shaking
   // first, gone a while).
   const movers = (st.movers ?? []).map((def) => {
+    // (Crushers: the dungeon's, a stone block with spikes under it, on chains.)
+    if (def.kind === 'crusher') {
+      const [m] = buildMovers(scene, { movers: [def] });
+      out.push(m.box);
+      return m;
+    }
     if (def.kind === 'crumble') {
       const c = scene.add.container(def.x, def.y);
       if (def.look === 'bridge') c.add(woodRun(scene, 'board', 0, 0, def.w));
@@ -257,7 +277,7 @@ function drawBlock(scene, theme, k, b, depth) {
     const piece = (name, px, py) => has(scene, k(name)) && out.push(img(scene, k(name), px, py).setTint(py > y ? earth : 0xffffff));
     const rowOf = (r, row) => {
       for (let c = 0; c < cols; c++) {
-        const side = c === 0 ? 'l' : c === cols - 1 ? 'r' : '';
+        const side = c === 0 && !b.joinL ? 'l' : c === cols - 1 && !b.joinR ? 'r' : '';
         piece(row && side ? `g-${row}${side}` : row ? `g-${row}` : side ? `g-${side}` : 'g-m', x + c * size, y + r * size);
       }
     };
@@ -269,9 +289,9 @@ function drawBlock(scene, theme, k, b, depth) {
       const strip = (name, sx, sw) => has(scene, k(name)) && sw > 0 && out.push(tiles(scene, k(name), sx, by, sw, bh).setTint(earth));
       if (cols === 1) strip('g-m', x, size);
       else {
-        strip('g-l', x, size);
+        strip(b.joinL ? 'g-m' : 'g-l', x, size);
         strip('g-m', x + size, (cols - 2) * size);
-        strip('g-r', x + (cols - 1) * size, size);
+        strip(b.joinR ? 'g-m' : 'g-r', x + (cols - 1) * size, size);
       }
     }
     if (!ground && rows > 1) rowOf(rows - 1, 'b');
@@ -287,6 +307,15 @@ function drawBlock(scene, theme, k, b, depth) {
   else if (look === 'mossledge') row(32, 'l-l', 'l-m', 'l-r', 'l-one');
   else if (look === 'swampthin') row(32, 'th-l', 'th-m', 'th-r');
   else if (look === 'snow') slice(16, true);
+  else if (look === 'pond') {
+    // A frozen pond: a dip with a sheet of ice over the dark earth, no edges of its own (the
+    // banks either side are the ground's own sides).
+    if (has(scene, k('g-m'))) out.push(tiles(scene, k('g-m'), x, y + 6, w, depth - y - 6).setTint(0x9aa6b8));
+    const g = scene.add.graphics();
+    g.fillStyle(0x86c3e6, 1).fillRect(x, y - 2, w, 9).fillStyle(0xbfe6ff, 1).fillRect(x, y - 2, w, 4).fillStyle(0xeaf8ff, 1).fillRect(x, y - 2, w, 1);
+    for (let gx = x + 14; gx < x + w - 18; gx += 43) g.fillStyle(0xffffff, 0.85).fillRect(gx, y, 12, 1).fillRect(gx + 17, y + 2, 5, 1);
+    out.push(g);
+  }
   else if (look === 'snowledge') slice(16, false);
   else if (look === 'stone') {
     // Castle stone: a stone top on red brick (the floor runs down out of sight). (Dark mortar
@@ -295,8 +324,8 @@ function drawBlock(scene, theme, k, b, depth) {
     row(16, 'stone-l', 'stone-m', 'stone-r');
     const under = h > TILE ? depth - y - TILE : 0;
     if (under > 0) out.push(tiles(scene, k('brick'), x, y + TILE, w, under));
-    // (A ledge: wooden braces under it.)
-    else if (has(scene, k('braces'))) out.push(tiles(scene, k('braces'), x, y + TILE, w, 16));
+    // (A ledge: wooden braces under it, unless spikes hang there.)
+    else if (has(scene, k('braces')) && !b.spiked) out.push(tiles(scene, k('braces'), x, y + TILE, w, 16));
   } else if (look === 'earth') {
     // A floating island: grass on top, dirt under, the underside tapering away.
     const cols = Math.round(w / 16);
@@ -350,6 +379,32 @@ function drawBlock(scene, theme, k, b, depth) {
 
 // ---- Each theme's own dressing ----
 
+// The pines' spikes: ice. Floors stick up out of the snow, undersides hang down as icicles, walls
+// point sideways; two shards to a tile, pale with a bright edge.
+function iceSpikes(scene, spikes) {
+  const g = scene.add.graphics();
+  const shard = (bx, by, tx, ty, wide) => {
+    g.fillStyle(0x9fd6f2, 1).fillTriangle(bx - wide, by, bx + wide, by, tx, ty);
+    g.fillStyle(0xeaf8ff, 1).fillTriangle(bx - wide, by, bx - wide + 2, by, tx, ty);
+    g.lineStyle(1, 0x5a8fb8, 1).lineBetween(bx + wide, by, tx, ty);
+  };
+  for (const s of spikes) {
+    if (s.up || s.down) {
+      for (let c = 0; c < s.width; c++) {
+        const x0 = s.x + c * TILE;
+        if (s.up) [[4, 11], [11, 15]].forEach(([dx, h]) => shard(x0 + dx, s.y + TILE, x0 + dx, s.y + TILE - h, 3));
+        else [[5, 14], [12, 9]].forEach(([dx, h]) => shard(x0 + dx, s.y - 6, x0 + dx, s.y + h, 3));
+      }
+      continue;
+    }
+    for (let y = s.y; y < s.y + s.height * TILE; y += 8) {
+      const base = s.face > 0 ? s.x + TILE : s.x;
+      g.fillStyle(0x9fd6f2, 1).fillTriangle(base, y, base, y + 8, base + s.face * 10, y + 4);
+    }
+  }
+  return g;
+}
+
 // The swamp's water, filling the gap between the banks.
 function swampWater(scene, st, k, depth) {
   const out = [];
@@ -382,8 +437,8 @@ function castleWalls(scene, st, k) {
   }
   out.push(tiles(scene, k('stone-m'), c.x, c.top - 16, c.w, 16));
   for (let bx = c.x; bx < c.x + c.w; bx += 32) out.push(img(scene, k('stone-m'), bx, c.top - 32));
-  // The pit in the middle: dark, all the way down.
-  if (c.pit) out.push(scene.add.rectangle(c.pit.x, 0, c.pit.w, 900, 0x140c12).setOrigin(0, 0));
+  // Its pits: dark, all the way down.
+  for (const pit of c.pits ?? (c.pit ? [c.pit] : [])) out.push(scene.add.rectangle(pit.x, 0, pit.w, 900, 0x140c12).setOrigin(0, 0));
   // Tall windows with the sky showing through.
   for (const wx of c.windows ?? []) {
     for (const wy of c.windowYs ?? [0]) {

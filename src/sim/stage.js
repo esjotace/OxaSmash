@@ -4,6 +4,7 @@
 // `theme` picks how the renderer dresses the stage; the rules only use the geometry.
 import { TILE } from './constants.js';
 import { buildMixedStage } from './sections.js';
+import { buildThemedStage, THEME_IDS } from './themed.js';
 
 const W = 1792; // both stages are this wide, and symmetric
 const mirrorX = (x, wTiles) => W - x - wTiles * TILE;
@@ -465,18 +466,31 @@ STAGES.residencia = {
 export const MIXED = 'mixed';
 const mixedCache = new Map();
 
+// Random stages in the painted themes (see themed.js): the menu choice "random-<prefix>" becomes
+// "<prefix>-<seed>" the same way (prefixes: THEME_IDS).
+export const RANDOM_THEMES = Object.keys(THEME_IDS).map((prefix) => `random-${prefix}`);
+
 export function getStage(id) {
   if (Object.hasOwn(STAGES, id)) return STAGES[id];
-  const m = typeof id === 'string' && /^mixed-(\d{1,10})$/.exec(id);
+  const m = typeof id === 'string' && /^(mixed|pines|castle|swamp|res)-(\d{1,10})$/.exec(id);
   if (!m) return null;
   if (!mixedCache.has(id)) {
     if (mixedCache.size > 8) mixedCache.clear();
-    mixedCache.set(id, buildMixedStage(Number(m[1]) >>> 0));
+    const seed = Number(m[2]) >>> 0;
+    mixedCache.set(id, m[1] === 'mixed' ? buildMixedStage(seed) : buildThemedStage(m[1], seed));
   }
   return mixedCache.get(id);
 }
 
 export const isStageId = (id) => getStage(id) !== null;
 
-// A menu choice (a stage id or MIXED) to the id a match is played on.
-export const rollStage = (choice) => (choice === MIXED ? `mixed-${Math.floor(Math.random() * 2 ** 32)}` : choice);
+// What a menu may offer: a stage, a random dungeon (MIXED), or a random painted stage.
+export const isStageChoice = (choice) => choice === MIXED || RANDOM_THEMES.includes(choice) || Object.hasOwn(STAGES, choice);
+
+// A menu choice to the id a match is played on (a random one rolled afresh).
+export function rollStage(choice) {
+  const seed = Math.floor(Math.random() * 2 ** 32);
+  if (choice === MIXED) return `mixed-${seed}`;
+  if (RANDOM_THEMES.includes(choice)) return `${choice.slice('random-'.length)}-${seed}`;
+  return choice;
+}

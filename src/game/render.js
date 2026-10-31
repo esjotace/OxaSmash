@@ -175,7 +175,9 @@ export class Renderer {
     layers.push(blocks);
     this.covers = buildCovers(scene, this.st);
     for (const c of this.covers) layers.push(...c.parts);
-    this.barrelImages = art('barrel') ? this.st.barrels.map((b) => scene.add.image(b.x, b.y + 1, 'barrel').setOrigin(0.5, 1)) : null;
+    // (Barrels, and furniture that blows up like one: retro-<kind>.)
+    const barrelKey = (b) => (b.kind && b.kind !== 'barrel' && scene.textures.exists(`retro-${b.kind}`) ? `retro-${b.kind}` : 'barrel');
+    this.barrelImages = art('barrel') ? this.st.barrels.map((b) => scene.add.image(b.x, b.y + 1, barrelKey(b)).setOrigin(0.5, 1)) : null;
     if (this.barrelImages) layers.push(...this.barrelImages);
     // Character sprites (Pixel Crawler by Anokolisa): one per player slot, cycling the cast.
     // Each player's character: picked for the match (roster[i].char), or the cast in order.
@@ -1488,7 +1490,7 @@ export class Renderer {
       this.runDust ??= [];
       if (running && this.anim - (this.runDust[i] ?? -1) > 0.1) {
         this.runDust[i] = this.anim;
-        this.dust(f.x - way * 6, f.y, 0.3);
+        this.dust(f.x - way * 6, f.y, 0.3, this.st.theme === 'pines' ? 0xeef6fa : undefined);
       }
       // Jinxed by the lamp: shrunk.
       if (f.jinxed) sprite.setScale(sprite.scaleX * 0.75, sprite.scaleY * 0.75);
@@ -2289,8 +2291,8 @@ function drawBlocks(g, st, kitFacades = new Set()) {
       }
     }
   }
-  for (const s of isDungeon(st) || st.theme === 'castle' ? [] : st.spikes) {
-    // (The dungeon and the castle draw their spike walls from the dungeon's tiles.)
+  for (const s of isDungeon(st) || st.theme === 'castle' || st.theme === 'pines' ? [] : st.spikes) {
+    // (The dungeon and the castle draw their spike walls from the dungeon's tiles, the pines in ice.)
     const h = s.height * TILE;
     g.fillStyle(C('#39405e'), 1).fillRect(s.x, s.y, TILE, h);
     g.lineStyle(1, C('#232839'), 1).strokeRect(s.x + 0.5, s.y + 0.5, TILE - 1, h - 1);

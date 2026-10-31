@@ -214,6 +214,11 @@ export function spikeArt(scene, spikes) {
   register(scene);
   const out = [];
   for (const s of spikes) {
+    // (An underside: spikes pointing down from under a block; the block is drawn on its own.)
+    if (s.down) {
+      for (let c = 0; c < s.width; c++) out.push(piece(scene, 'spikeDown', s.x + c * TILE, s.y));
+      continue;
+    }
     if (s.up) {
       for (let c = 0; c < s.width; c++) {
         out.push(piece(scene, 'spikeUp', s.x + c * TILE, s.y), piece(scene, 'stoneBlock', s.x + c * TILE, s.y + TILE));
